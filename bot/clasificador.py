@@ -230,15 +230,16 @@ class Clasificador:
         audio = reporte.get("audio_url")
         foto = reporte.get("foto_url")
 
+        etapa = self.parcelas.get(parcela_id, {}).get("etapa", "") if parcela_id else ""
         resultado: dict
-        if tipo == "texto" or (tipo == "foto" and texto):
+        if tipo == "texto" or (tipo == "foto" and texto and self._texto_tiene_senal(texto)):
             resultado = self.clasificar_texto(texto, cultivo)
         else:
-            # voz y fotos sin caption: requieren motor de audio/visión
-            resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo)
+            # voz y fotos sin caption: motor multimodal (whisper/visión) si hay key
+            resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa)
 
         # anti prompt-injection: NO cambia la decisión, solo se anota
-        resultado["injection"] = self.es_prompt_injection(texto)
+        resultado["injection"] = self.es_prompt_injection(texto or resultado.get("texto"))
 
         # regla de urgencia (código puro)
         es_plaga = bool(resultado["es_plaga"])
@@ -246,9 +247,15 @@ class Clasificador:
         resultado["urgente"] = es_plaga and plaga in PLAGAS_URGENTES
         return resultado
 
-    def _motor_multimedia(self, tipo, texto, audio, foto, cultivo) -> dict:
-        """Aún sin IA sólida determinista; delegable a visión/audio.
-        Por ahora conservador: es_plaga por defecto a partir del tipo de medio."""
+    def _texto_tiene_senal(self, texto: str | None) -> bool:
+        """Evita mandar a visión captions vacíos o puramente descriptivos."""
+        t = self.normalizar(texto)
+        return bool(t) and not any(
+            w in t for w in ["mándo", "mando", "mire", "mira", "asi", "como esta", "que sera"]
+        )
+
+    def _motor_multimedia(self, tipo, texto, audio, foto, cultivo, etapa="") -> dict:
+        """Intenta transcripción/visión con OpenRouter; degrada conservadoramente."""
         # Reglas de cultivo exclusivo (deterministas, alta señal):
         # limón -> solo hlb ; grano almacenado -> solo gorgojo_khapra
         cultivo_exclusivo = {"limón": "hlb", "grano almacenado": "gorgojo_khapra"}
@@ -262,8 +269,30 @@ class Clasificador:
                 return {"es_plaga": False, "plaga": None, "confianza": 0.8, "motor": "multimedia_prefiltro",
                         "razon": "medio con mensaje no agrícola"}
         if self.con_ia:
-            # Se intentará llamar al modelo de visión/audio (futuro)
-            pass
+            try:
+                from motor_audio_foto import procesar_reporte_multimedia
+
+                res = procesar_reporte_multimedia(
+                    {"tipo": tipo, "audio_url": audio, "foto_url": foto}, cultivo or "", etapa or ""
+                )
+                fuente = res.get("fuente")
+                if fuente == "whisper" and res.get("texto"):
+                    return self.clasificar_texto(res["texto"], cultivo) | {
+                        "motor": "whisper+texto", "razon": "transcripción de voz"
+                    }
+                if fuente == "vision" and res.get("es_plaga_sugerida") is not None:
+                    es = bool(res["es_plaga_sugerida"])
+                    p = res.get("plaga_sugerida") if es else None
+                    return {
+                        "es_plaga": es,
+                        "plaga": p or ("desconocida" if es else None),
+                        "confianza": res.get("confianza", 0.5),
+                        "motor": "vision",
+                        "razon": f"visión: {res.get('sintomas', '')[:100]}",
+                    }
+            except Exception as exc:  # pragma: no cover - degrada
+                return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.4,
+                        "motor": f"{tipo}_fallo_ia", "razon": f"IA falló: {exc}"}
         # Fallback conservador: reporte con foto/audio -> plausible plaga desconocida
         return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.5, "motor": f"{tipo}_desconocido",
                 "razon": "medio sin clasificar, plaga desconocida"}
