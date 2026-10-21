@@ -35,7 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente, ApiError  # noqa: E402
-from clasificador import Clasificador, caso_para_api, resultados_a_casos  # noqa: E402
+from clasificador import Clasificador, caso_para_api, fusionar_respuesta, resultados_a_casos  # noqa: E402
+from nivel2 import decidir_brote  # noqa: E402
 from extras import Extras  # noqa: E402
 from supabase_repositorio import RepositorioSupabase  # noqa: E402
 
@@ -96,6 +97,7 @@ class Listener:
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
         self.estado = cargar_json(ESTADO, {"procesados": [], "enviados": [], "iniciado": ahora()})
         self.estado.setdefault("brotes_avisados", [])
+        self.estado.setdefault("dudosos_avisados", [])
         # Respuestas ya fusionadas con su reporte original. Permite migrar
         # estados viejos en los que la respuesta se procesó con id equivocado.
         self.estado.setdefault("respuestas_aplicadas", [])
@@ -180,42 +182,10 @@ class Listener:
         print(f"[{ahora()}] reconstruidos {len(faltan)} caso(s) ya enviados para el historial de brote")
 
     @staticmethod
-    def _fusionar_respuesta(padre: dict, respuesta: dict) -> dict:
-        """Combina el mensaje original con la respuesta del productor.
-
-        El resultado se clasifica con el ``id`` del padre: la API exige que
-        una respuesta a una pregunta se registre con el folio original, no
-        con el id del mensaje de respuesta.
-        """
-        fusionado = dict(padre)
-        texto = " ".join(
-            x for x in (padre.get("texto"), respuesta.get("texto")) if x
-        ).strip()
-        if texto:
-            fusionado["texto"] = texto
-            if padre.get("foto_url"):
-                # Mantener la foto permite la fusión visión + texto del padre.
-                fusionado["tipo"] = "foto"
-                fusionado["audio_url"] = None
-            elif respuesta.get("foto_url"):
-                fusionado["tipo"] = "foto"
-                fusionado["foto_url"] = respuesta["foto_url"]
-                fusionado["audio_url"] = None
-            else:
-                # Para voz o texto, la respuesta escrita manda y evita volver
-                # a transcribir un audio que ya se había procesado.
-                fusionado["tipo"] = "texto"
-                fusionado["audio_url"] = None
-                fusionado["foto_url"] = None
-        else:
-            for clave in ("audio_url", "foto_url"):
-                if respuesta.get(clave):
-                    fusionado[clave] = respuesta[clave]
-            if respuesta.get("tipo"):
-                fusionado["tipo"] = respuesta["tipo"]
-        fusionado["respuesta_a"] = None
-        fusionado["id"] = padre["id"]
-        return fusionado
+    def _fusionar_respuesta(padre: dict, respuesta: dict,
+                            plaga_padre: str | None = None) -> dict:
+        """Combina el mensaje original con la respuesta del productor."""
+        return fusionar_respuesta(padre, respuesta, plaga_padre)
 
     def procesar(self, reporte: dict) -> dict:
         try:
@@ -229,7 +199,13 @@ class Listener:
             print(f"[{ahora()}] aviso: respuesta {reporte.get('id')} sin padre "
                   f"{reporte.get('respuesta_a')}; se procesa como reporte suelto")
         entrada = padre or reporte
-        para_clasificar = self._fusionar_respuesta(padre, reporte) if padre else reporte
+        plaga_padre = None
+        if padre:
+            caso_padre = self.casos.get(padre.get("id")) or {}
+            if caso_padre.get("es_plaga"):
+                plaga_padre = caso_padre.get("plaga")
+        para_clasificar = (self._fusionar_respuesta(padre, reporte, plaga_padre)
+                           if padre else reporte)
         if es_respuesta and padre:
             # La respuesta aporta datos nuevos: el padre sale de la cola de
             # dudosos para registrarse/complementarse con la información nueva.
@@ -490,18 +466,34 @@ class Listener:
                 self.acciones_extra(reporte, detalle, caso)
 
     def _recalcular_brotes(self, reportes_por_id: dict) -> None:
-        """Reaplica la regla de brote sobre el conjunto completo de casos."""
+        """Reaplica la regla de brote sobre el conjunto completo de casos.
+
+        Guarda en el caso el conteo ``_brote_n`` y las referencias auditables.
+        Para casos nuevos aplica la política conservadora: si ``n == 2`` no se
+        envía ``brote`` y se marca ``_brote_dudoso`` para revisión conjunta.
+        """
         try:
-            brotes = self.clf.brotes_de_casos(list(self.casos.values()), reportes_por_id)
-            for rid, valor_brote in brotes.items():
-                if rid not in self.casos:
+            detalles = self.clf.evaluar_brotes(list(self.casos.values()), reportes_por_id)
+            for rid, info in detalles.items():
+                caso = self.casos.get(rid)
+                if not caso:
                     continue
-                valor_brote = bool(valor_brote)
-                if bool(self.casos[rid].get("brote")) == valor_brote:
+                caso["_brote_n"] = info["n"]
+                caso["_brote_refs"] = info["refs"]
+                if rid in self.estado["enviados"]:
+                    # Ya está en la API: no se puede cambiar; solo se audita.
                     continue
-                self.casos[rid]["brote"] = valor_brote
+                decision = decidir_brote(info["n"])
+                if decision is None:
+                    caso.pop("brote", None)
+                    caso["_brote_dudoso"] = True
+                    continue
+                caso.pop("_brote_dudoso", None)
+                if bool(caso.get("brote")) == decision:
+                    continue
+                caso["brote"] = decision
                 try:
-                    self.repo.actualizar_brote(rid, valor_brote)
+                    self.repo.actualizar_brote(rid, decision)
                 except Exception as exc:
                     print(f"[{ahora()}] aviso Supabase (brote {rid}): {exc}")
         except Exception as exc:
@@ -527,7 +519,9 @@ class Listener:
         conf = float(detalle.get("confianza") or 0)
         # 0) BROTE: siempre requiere visto bueno (regla de Rafa).
         if caso.get("brote"):
-            return f"brote activo (evaluar juntos antes de registrar) · conf={conf:.2f}"
+            return f"brote activo (evaluar juntos antes de registrar) · n={caso.get('_brote_n', '?')} · conf={conf:.2f}"
+        if caso.get("_brote_dudoso"):
+            return f"brote en el límite (n={caso.get('_brote_n', 2)}; no se envía brote hasta revisar)"
         if caso.get("plaga") == "desconocida":
             return "plaga desconocida (el motor no identificó qué plaga es)"
         if conf < CONFIANZA_DUDOSA:
@@ -543,24 +537,40 @@ class Listener:
             except json.JSONDecodeError:
                 pendientes = []
         pendientes = [p for p in pendientes if p.get("reporte_id") != caso["reporte_id"]]
+        rid = str(caso["reporte_id"])
         pendientes.append({
-            "reporte_id": caso["reporte_id"],
+            "reporte_id": rid,
             "recibido": reporte.get("recibido"),
             "texto": (detalle.get("texto") or "")[:280],
             "motivo": motivo,
             "caso": caso_para_api(caso),
+            "n": caso.get("_brote_n"),
+            "refs": caso.get("_brote_refs") or [],
+            "brote": caso.get("brote"),
+            "sugerencia": ("marcar brote" if caso.get("brote")
+                           else "marcar sin brote" if caso.get("_brote_dudoso")
+                           else "revisar"),
             "procesado": ahora(),
         })
         guardar_json(PENDIENTES_REVISION, pendientes)
-        self._parkeados.add(str(caso["reporte_id"]))
-        print(f"[{ahora()}] CASO DUDOSO {caso['reporte_id']}: {motivo} -> pendiente de revisión")
-        if self.telegram:
-            try:
-                from telegram_notificador import alerta_dudoso
+        self._parkeados.add(rid)
+        print(f"[{ahora()}] CASO DUDOSO {rid}: {motivo} -> pendiente de revisión")
+        # La notificación no depende del hilo del bot: el notificador ya sabe
+        # trabajar en seco si faltan TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.
+        if rid in self.estado["dudosos_avisados"]:
+            return
+        try:
+            from telegram_notificador import alerta_dudoso
 
-                alerta_dudoso(caso, motivo, detalle)
-            except Exception as exc:
-                print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
+            enviado = alerta_dudoso(caso, motivo, detalle,
+                                    refs=caso.get("_brote_refs"))
+            if enviado:
+                self.estado["dudosos_avisados"].append(rid)
+                print(f"[{ahora()}] alerta Telegram enviada: {rid}")
+            else:
+                print(f"[{ahora()}] alerta Telegram no enviada (seco o error): {rid}")
+        except Exception as exc:
+            print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
 
     def _arrancar_vigilante(self) -> None:
         """Avisa al coordinador por Telegram cuando hay reportes por verificar."""

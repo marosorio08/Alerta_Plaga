@@ -16,6 +16,7 @@ Así el resto del sistema puede llamarlo sin romperse.
 
 from __future__ import annotations
 
+import html
 import os
 import sys
 from pathlib import Path
@@ -131,39 +132,80 @@ def resumen_diario(casos: list[dict], titulo: str = "Resumen de casos") -> bool:
     )
 
 
-def alerta_dudoso(caso: dict, motivo: str, detalle: dict | None = None) -> bool:
+def _esc(valor) -> str:
+    """Escapa texto para el HTML de Telegram (evita errores 400)."""
+    return html.escape(str(valor if valor is not None else "—"), quote=False)
+
+
+def alerta_dudoso(caso: dict, motivo: str, detalle: dict | None = None,
+                  refs: list[dict] | None = None) -> bool:
     """Avisa al coordinador cuando el motor no está seguro de un caso.
 
-    Se usa para los casos que el sistema marca como dudosos (confianza baja,
-    brote en el límite, plaga desconocida o discrepancias) y que conviene
-    revisar juntos antes de registrarlos. Arma un mensaje claro con el folio,
-    el motivo y los datos que tenemos.
+    Incluye el conteo de brote y las referencias cercanas para que la revisión
+    conjunta se haga con datos, no a ciegas. Los botones permiten registrar el
+    payload propuesto, forzar ``brote=false`` o retirarlo de la cola.
     """
-    rid = caso.get("reporte_id", "?")
+    rid = str(caso.get("reporte_id", "?"))
+    n = caso.get("_brote_n")
+    brote = caso.get("brote")
+    if brote is True:
+        titulo = f"🦠 <b>BROTE {rid} — requiere visto bueno</b>"
+    elif caso.get("_brote_dudoso"):
+        titulo = f"⚠️ <b>BROTE EN EL LÍMITE {rid} — n=2</b>"
+    else:
+        titulo = f"⚠️ <b>CASO DUDOSO {rid}</b>"
+
     lineas = [
-        f"⚠️ <b>CASO DUDOSO {rid}</b>",
-        f"<b>Motivo:</b> {motivo}",
+        titulo,
+        f"<b>Motivo:</b> {_esc(motivo)}",
         f"<b>Es plaga:</b> {'sí' if caso.get('es_plaga') else 'no'}",
-        f"<b>Plaga:</b> {caso.get('plaga') or '—'}",
-        f"<b>Semáforo:</b> {caso.get('semaforo') or '—'}  "
-        f"<b>Prioridad:</b> {caso.get('prioridad') or '—'}",
-        f"<b>Técnico:</b> {caso.get('tecnico_id') or '—'}  "
-        f"<b>Brote:</b> {caso.get('brote') or '—'}",
+        f"<b>Plaga:</b> {_esc(caso.get('plaga'))}",
+        f"<b>Semáforo:</b> {_esc(caso.get('semaforo'))}  "
+        f"<b>Prioridad:</b> {_esc(caso.get('prioridad'))}",
+        f"<b>Técnico:</b> {_esc(caso.get('tecnico_id'))}  "
+        f"<b>Brote:</b> {_esc(brote) if brote is not None else 'sin enviar'}",
     ]
+    if n is not None:
+        lineas.append(f"<b>Casos cercanos (n):</b> {n}")
+    if refs:
+        lineas.append("<b>Referencias:</b>")
+        for ref in refs[:3]:
+            actual = " · actual" if ref.get("es_actual") else ""
+            lineas.append(
+                f"  • {_esc(ref.get('reporte_id'))} · {_esc(ref.get('plaga'))} · "
+                f"{_esc(ref.get('distancia_km'))} km · "
+                f"{_esc(str(ref.get('recibido') or '')[:16])}{actual}"
+            )
     if detalle:
         conf = detalle.get("confianza")
         if conf is not None:
             lineas.append(f"<b>Confianza:</b> {round(float(conf), 2)}")
         motor = detalle.get("motor")
         if motor:
-            lineas.append(f"<b>Motor:</b> {motor}")
+            lineas.append(f"<b>Motor:</b> {_esc(motor)}")
         razon = detalle.get("razon")
         if razon:
-            lineas.append(f"<b>Razón:</b> {str(razon)[:160]}")
-    botones = [[
-        {"text": "✅ Registrarlo", "callback_data": f"aprobar:{rid}"},
-        {"text": "🚫 Revisar", "callback_data": f"falsa:{rid}"},
-    ]]
+            lineas.append(f"<b>Razón:</b> {_esc(str(razon)[:160])}")
+
+    if brote is True:
+        botones = [[
+            {"text": "✅ Registrar brote", "callback_data": f"aprobar:{rid}"},
+            {"text": "🚫 Registrar sin brote", "callback_data": f"sin_brote:{rid}"},
+        ], [
+            {"text": "🚫 Descartar", "callback_data": f"falsa:{rid}"},
+        ]]
+    elif caso.get("_brote_dudoso"):
+        botones = [[
+            {"text": "🦠 Marcar brote", "callback_data": f"marcar_brote:{rid}"},
+            {"text": "🚫 Registrar sin brote", "callback_data": f"sin_brote:{rid}"},
+        ], [
+            {"text": "🚫 Descartar", "callback_data": f"falsa:{rid}"},
+        ]]
+    else:
+        botones = [[
+            {"text": "✅ Registrarlo", "callback_data": f"aprobar:{rid}"},
+            {"text": "🚫 Revisar", "callback_data": f"falsa:{rid}"},
+        ]]
     return enviar("\n".join(lineas), botones)
 
 
@@ -176,6 +218,24 @@ def probar() -> None:
     parcela = {"nombre": "La Tinaja", "id": "P-074", "cultivo": "maíz", "etapa": "V8",
                "superficie_ha": 4.5}
     alerta_caso(caso, plaga, parcela)
+    # Prueba del mensaje de brote/dudoso con referencias auditables.
+    caso_brote = {"reporte_id": "R-9998", "es_plaga": True, "plaga": "chapulin",
+                  "semaforo": "amarillo", "prioridad": 68, "tecnico_id": "T-04",
+                  "brote": True, "_brote_n": 3,
+                  "_brote_refs": [
+                      {"reporte_id": "R-9998", "plaga": "chapulin",
+                       "recibido": "2026-10-21T10:00:00-06:00",
+                       "distancia_km": 0.0, "es_actual": True},
+                      {"reporte_id": "R-9001", "plaga": "chapulin",
+                       "recibido": "2026-10-20T09:00:00-06:00",
+                       "distancia_km": 1.25, "es_actual": False},
+                      {"reporte_id": "R-9002", "plaga": "chapulin",
+                       "recibido": "2026-10-19T08:00:00-06:00",
+                       "distancia_km": 3.4, "es_actual": False},
+                  ]}
+    alerta_dudoso(caso_brote, "brote activo (evaluar juntos antes de registrar)",
+                  {"confianza": 0.9, "motor": "stt consenso", "razon": "prueba"},
+                  refs=caso_brote["_brote_refs"])
 
 
 if __name__ == "__main__":
