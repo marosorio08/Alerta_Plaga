@@ -120,6 +120,20 @@ PATRONES_SEGUIMIENTO = [
     "no me han contestado",
 ]
 
+# si el reporte no trae parcela, se infiere el cultivo por cómo habla el productor
+CULTIVO_POR_MENCION = {
+    "maíz": ["milpa", "maicito", "maizal", "maiz", "maíz", "elotes", "olote"],
+    "frijol": ["frijol", "frijolera", "frijolito", "frijolar"],
+    "avena": ["avena", "avenita"],
+    "haba": ["haba", "habas", "habita"],
+    "papa": ["papa", "papita", "papa blanca"],
+    "jitomate": ["jitomate", "tomate", "jitomatera", "invernadero"],
+    "limón": ["limón", "limon", "limonero", "cítricos", "citricos"],
+    "grano almacenado": ["grano almacenado", "bodega", "almacén", "almacen", "troje"],
+    "trigo": ["trigo"],
+    "calabacita": ["calabacita", "calabaza"],
+}
+
 
 def cargar_catalogo(nombre: str) -> list:
     archivo = CACHE / f"{nombre}.json"
@@ -133,8 +147,24 @@ class Clasificador:
         self.plagas = cargar_catalogo("plagas")
         self.con_ia = con_ia and bool(os.getenv("OPENROUTER_API_KEY"))
 
-    # ---------- herramientas de texto ----------
+    def recargar_catalogo(self) -> None:
+        """Vuelve a bajar /plagas y /parcelas de la API.
 
+        Si los organizadores agregan plagas, cultivos o cambian severidades,
+        el motor los adopta sin reiniciarse ni tocar código.
+        """
+        plagas = self.api.get_plagas()
+        parcelas = self.api.get_parcelas()
+        if plagas:
+            self.plagas = plagas
+            (CACHE / "plagas.json").write_text(json.dumps(plagas, ensure_ascii=False, indent=2), encoding="utf-8")
+        if parcelas:
+            self.parcelas = {p["id"]: p for p in parcelas}
+            (CACHE / "parcelas.json").write_text(
+                json.dumps(parcelas, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+    # ---------- herramientas de texto ----------
     @staticmethod
     def normalizar(texto: str | None) -> str:
         if not texto:
@@ -188,6 +218,7 @@ class Clasificador:
         puntajes = self._puntuar_plagas(t)
         mejor = max(puntajes, key=puntajes.get) if puntajes else None
         tiene_senal = mejor is not None and puntajes[mejor] >= 2.0
+        cultivo_ctx = cultivo or self.inferir_cultivo(t)
 
         # 1) trámite/consulta sin señal de plaga -> NO es plaga
         es_admin = any(p in t for p in PATRONES_NO_PLAGA)
@@ -197,7 +228,17 @@ class Clasificador:
 
         # 2) plaga identificada por señales
         if tiene_senal:
-            return self._resultado_plaga(mejor, cultivo, "texto", t, puntajes[mejor])
+            return self._resultado_plaga(mejor, cultivo_ctx, "texto", t, puntajes[mejor])
+
+        # 2b) señal débil pero con un único candidato posible para el cultivo
+        if puntajes and cultivo_ctx:
+            compatibles = self.cultivares_compatibles(cultivo_ctx)
+            debiles = {k: v for k, v in puntajes.items() if k in compatibles and v >= 1.0}
+            if len(debiles) == 1:
+                plaga_unica = next(iter(debiles))
+                return {"es_plaga": True, "plaga": plaga_unica, "confianza": 0.6,
+                        "motor": "senal_debil+cultivo",
+                        "razon": f"«{mejor}» es la única opción en {cultivo_ctx}"}
 
         # 3) seguimiento de un caso previo sin nombrar plaga
         if any(p in t for p in PATRONES_SEGUIMIENTO):
@@ -223,6 +264,13 @@ class Clasificador:
         if not cultivo:
             return {p["id"] for p in self.plagas}
         return {p["id"] for p in self.plagas if cultivo in set(p.get("cultivos", []))}
+
+    def inferir_cultivo(self, texto_norm: str) -> str | None:
+        """Deduce el cultivo cuando el reporte no trae parcela (ej. 'mi milpa')."""
+        for cultivo, menciones in CULTIVO_POR_MENCION.items():
+            if any(m in texto_norm for m in menciones):
+                return cultivo
+        return None
 
     def _resultado_plaga(self, plaga_id: str, cultivo: str | None, motor: str,
                          texto_norm: str, puntaje: float = 0.0) -> dict:
@@ -258,19 +306,143 @@ class Clasificador:
 
         etapa = self.parcelas.get(parcela_id, {}).get("etapa", "") if parcela_id else ""
         resultado: dict
-        if tipo == "texto" or (tipo == "foto" and texto and self._texto_tiene_senal(texto)):
+
+        if tipo == "foto" and foto and texto:
+            # 3.4 Fusión multimodal: pie de foto + análisis visual
+            resultado = self._fusion_foto_texto(texto, rid=reporte.get("id"), cultivo=cultivo, audio=audio,
+                                               foto=foto, etapa=etapa)
+        elif tipo == "texto":
             resultado = self.clasificar_texto(texto, cultivo)
         else:
-            # voz y fotos: motor multimodal (whisper/visión) con caché
+            # voz y fotos sin pie: motor multimodal (STT/visión) con caché
             resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa, rid=reporte.get("id"))
+
+        # 2.7 seguimientos: si responde a otro reporte, se usa como contexto
+        padre = self._reporte_padre(reporte)
+        if padre:
+            resultado = self._aplicar_seguimiento(resultado, padre, cultivo, reporte)
 
         # anti prompt-injection: NO cambia la decisión, solo se anota
         resultado["injection"] = self.es_prompt_injection(texto or resultado.get("texto"))
 
-        # regla de urgencia (código puro)
+        # regla de urgencia (código puro, derivada del catálogo)
         es_plaga = bool(resultado["es_plaga"])
         plaga = resultado.get("plaga")
-        resultado["urgente"] = es_plaga and plaga in PLAGAS_URGENTES
+        resultado["urgente"] = bool(es_plaga and self.es_urgente(plaga))
+        return resultado
+
+    def es_urgente(self, plaga_id: str | None) -> bool:
+        """Urgencia por catálogo: severidad alta/crítica o cuarentenaria.
+
+        Se deriva de GET /plagas para no romperse si los organizadores cambian
+        el catálogo o agregan plagas nuevas. PLAGAS_URGENTES queda de respaldo.
+        """
+        if not plaga_id:
+            return False
+        plaga = next((p for p in self.plagas if p["id"] == plaga_id), None)
+        if plaga:
+            severidad = str(plaga.get("severidad", "")).lower()
+            return bool(plaga.get("cuarentenaria")) or severidad in ("alta", "critica", "crítica")
+        return plaga_id in PLAGAS_URGENTES
+
+    def _fusion_foto_texto(self, texto, rid, cultivo, audio, foto, etapa) -> dict:
+        """Combina lo que dice el productor con lo que ve el modelo de visión."""
+        del_texto = self.clasificar_texto(texto, cultivo)
+        res = self._multimedia(rid, "foto", audio, foto, cultivo, etapa)
+        if res.get("fuente") != "vision" or res.get("es_plaga_sugerida") is None:
+            del_texto["motor"] = "texto (sin visión)"
+            return del_texto
+
+        vision = self._resultado_vision(res, cultivo)
+        t_plaga, v_plaga = del_texto.get("plaga"), vision.get("plaga")
+        t_ok = del_texto.get("es_plaga") and t_plaga != "desconocida"
+        v_ok = vision.get("es_plaga") and v_plaga != "desconocida"
+
+        # Ambos coinciden -> máxima confianza
+        if t_ok and v_ok and t_plaga == v_plaga:
+            return {"es_plaga": True, "plaga": t_plaga, "confianza": 0.97, "motor": "fusion",
+                    "razon": f"texto y visión coinciden en {t_plaga}"}
+        # Solo la imagen identifica -> manda la imagen
+        if v_ok and not t_ok:
+            vision["motor"] = "fusion (visión)"
+            return vision
+        # Solo el texto identifica -> manda el texto
+        if t_ok and not v_ok:
+            del_texto["motor"] = "fusion (texto)"
+            return del_texto
+        # Conflicto: si el texto es muy específico se respeta, si no, se duda
+        if t_ok and v_ok:
+            puntaje_texto = self._puntuar_plagas(self.normalizar(texto)).get(t_plaga, 0)
+            if puntaje_texto >= 5:
+                return {"es_plaga": True, "plaga": t_plaga, "confianza": 0.7, "motor": "fusion (texto fuerte)",
+                        "razon": f"texto describe {t_plaga}; visión propuso {v_plaga}"}
+            return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.4, "motor": "fusion (conflicto)",
+                    "razon": f"texto dice {t_plaga}, visión dice {v_plaga}"}
+        # Ninguno identifica: si alguno dice que sí es plaga, no inventamos especie
+        if vision.get("es_plaga") or del_texto.get("es_plaga"):
+            return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.45, "motor": "fusion",
+                    "razon": "es plaga, especie no identificada"}
+        return {"es_plaga": False, "plaga": None, "confianza": 0.8, "motor": "fusion",
+                "razon": "ni texto ni imagen muestran plaga"}
+
+    def _resultado_vision(self, res: dict, cultivo: str | None) -> dict:
+        """Normaliza la salida de visión y la valida contra el cultivo."""
+        es = bool(res.get("es_plaga_sugerida"))
+        if not es:
+            return {"es_plaga": False, "plaga": None, "confianza": float(res.get("confianza", 0.7)),
+                    "motor": "vision", "razon": f"visión: no es plaga ({str(res.get('sintomas'))[:80]})"}
+        plaga = res.get("plaga_sugerida") or "desconocida"
+        compatibles = self.cultivares_compatibles(cultivo)
+        if cultivo and plaga != "desconocida" and plaga not in compatibles:
+            return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.3, "motor": "vision",
+                    "razon": f"visión propuso {plaga}, imposible en {cultivo}"}
+        return {"es_plaga": True, "plaga": plaga, "confianza": float(res.get("confianza", 0.5)),
+                "motor": "vision", "razon": f"visión: {str(res.get('sintomas'))[:100]}"}
+
+    # ---------- 2.7 seguimientos (respuesta_a) ----------
+
+    def _reporte_padre(self, reporte: dict) -> dict | None:
+        """Devuelve el reporte al que éste responde, si existe."""
+        padre_id = reporte.get("respuesta_a")
+        if not padre_id:
+            return None
+        archivo = CACHE / "reportes.json"
+        if not archivo.exists():
+            return None
+        try:
+            todos = json.loads(archivo.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        return next((r for r in todos if r["id"] == padre_id), None)
+
+    def _aplicar_seguimiento(self, resultado: dict, padre: dict, cultivo: str | None,
+                             reporte: dict) -> dict:
+        """Usa el caso previo como contexto sin arriesgar una especie inventada.
+
+        - Si el seguimiento identifica plaga propia, se respeta.
+        - Si no la identifica pero el padre sí, hereda la plaga del padre
+          (solo si es compatible con el cultivo).
+        - Si el padre tampoco la tenía, queda "desconocida".
+        """
+        resultado["seguimiento_de"] = padre.get("id")
+        if resultado.get("es_plaga") and resultado.get("plaga") not in (None, "desconocida"):
+            resultado["razon"] = f"seguimiento con plaga propia; {resultado.get('razon', '')}"
+            return resultado
+
+        plaga_padre = self.clasificar_texto(padre.get("texto"), cultivo).get("plaga") if padre.get("texto") else None
+        if not plaga_padre:
+            plaga_padre = self._multimedia(padre.get("id"), padre.get("tipo"), padre.get("audio_url"),
+                                           padre.get("foto_url"), cultivo, "").get("plaga_sugerida")
+        if not plaga_padre or plaga_padre == "desconocida":
+            return resultado
+        if cultivo and plaga_padre not in self.cultivares_compatibles(cultivo):
+            return resultado
+
+        resultado["es_plaga"] = True
+        resultado["plaga"] = plaga_padre
+        resultado["confianza"] = 0.7
+        resultado["motor"] = "seguimiento+padre"
+        resultado["razon"] = f"hereda {plaga_padre} del caso {padre.get('id')}"
         return resultado
 
     def _texto_tiene_senal(self, texto: str | None) -> bool:
@@ -293,34 +465,60 @@ class Clasificador:
         res = self._multimedia(rid, tipo, audio, foto, cultivo, etapa)
         fuente = res.get("fuente")
 
-        if fuente == "whisper" and res.get("texto"):
-            base = self.clasificar_texto(res["texto"], cultivo)
-            base["motor"] = "whisper+" + base.get("motor", "texto")
-            base["texto"] = res["texto"]
-            base["razon"] = "transcripción: " + base.get("razon", "")
-            return base
+        if fuente in ("stt", "whisper") and (res.get("texto") or res.get("texto_respaldo")):
+            return self._clasificar_transcripciones(res, cultivo)
 
         if fuente == "vision" and res.get("es_plaga_sugerida") is not None:
-            es = bool(res["es_plaga_sugerida"])
-            if not es:
-                return {"es_plaga": False, "plaga": None,
-                        "confianza": float(res.get("confianza", 0.7)), "motor": "vision",
-                        "razon": f"visión: no es plaga ({str(res.get('sintomas'))[:80]})"}
-            plaga = res.get("plaga_sugerida") or "desconocida"
-            # validación contra el cultivo (evita alucinaciones imposibles)
-            compatibles = self.cultivares_compatibles(cultivo)
-            if cultivo and plaga != "desconocida" and plaga not in compatibles:
-                return {"es_plaga": True, "plaga": "desconocida",
-                        "confianza": 0.3, "motor": "vision",
-                        "razon": f"visión propuso {plaga}, imposible en {cultivo}"}
-            return {"es_plaga": True, "plaga": plaga,
-                    "confianza": float(res.get("confianza", 0.5)), "motor": "vision",
-                    "razon": f"visión: {str(res.get('sintomas'))[:100]}"}
+            return self._resultado_vision(res, cultivo)
 
         # Sin datos de IA: fallback conservador
         return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.4,
                 "motor": f"{tipo}_desconocido",
                 "razon": "medio sin clasificar, plaga desconocida"}
+
+    def _clasificar_transcripciones(self, res: dict, cultivo: str | None) -> dict:
+        """Consenso entre las dos transcripciones (modelo principal y respaldo).
+
+        Si ambos modelos producen la misma plaga, se acepta con alta confianza.
+        Si difieren, gana la transcripción con señal agronómica más fuerte; si
+        ninguna tiene señal suficiente, queda "desconocida".
+        """
+        principal = res.get("texto") or ""
+        respaldo = res.get("texto_respaldo") or ""
+        mejor = self.clasificar_texto(principal, cultivo)
+        mejor["texto"] = principal
+        if not respaldo or self.normalizar(respaldo) == self.normalizar(principal):
+            mejor["motor"] = "stt+" + mejor.get("motor", "texto")
+            mejor["razon"] = "transcripción: " + mejor.get("razon", "")
+            return mejor
+
+        alterno = self.clasificar_texto(respaldo, cultivo)
+        p1 = mejor.get("plaga") if mejor.get("es_plaga") else None
+        p2 = alterno.get("plaga") if alterno.get("es_plaga") else None
+
+        if p1 and p2 and p1 == p2:
+            mejor["confianza"] = min(0.97, float(mejor.get("confianza", 0.8)) + 0.03)
+            mejor["motor"] = "stt consenso"
+            mejor["razon"] = f"los dos modelos coinciden en {p1}"
+            mejor["texto_respaldo"] = respaldo
+            return mejor
+
+        # eligen la versión con más señal (o la que identifica plaga)
+        puntos = lambda r: self._puntuar_plagas(self.normalizar(r.get("texto", "")))
+        s1 = max(puntos(mejor).values(), default=0)
+        s2 = max(puntos({"texto": respaldo}).values(), default=0)
+
+        if p2 and p2 != p1 and s2 > s1:
+            alterno["motor"] = "stt respaldo"
+            alterno["razon"] = f"respaldo con más señal ({s2:.1f} vs {s1:.1f})"
+            alterno["texto"] = respaldo
+            alterno["texto_respaldo"] = principal
+            return alterno
+
+        mejor["motor"] = "stt+" + mejor.get("motor", "texto")
+        mejor["razon"] = "transcripción: " + mejor.get("razon", "")
+        mejor["texto_respaldo"] = respaldo
+        return mejor
 
     def _multimedia(self, rid, tipo, audio, foto, cultivo, etapa) -> dict:
         """Lee el resultado multimodal de caché o llama a la IA (una sola vez)."""
