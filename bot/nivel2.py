@@ -338,3 +338,22 @@ def es_brote(plaga: str, lat, lon, recibido, referencias: list[dict],
     """Verdadero si hay al menos `minimo` casos (contando este) de la misma
     plaga a menos de 5 km en los últimos 7 días."""
     return contar_casos_cercanos(plaga, lat, lon, recibido, referencias, **otras) >= minimo
+
+
+def decidir_brote(n: int | None) -> bool | None:
+    """Decisión conservadora con el conteo de casos cercanos.
+
+    - 3 o más: brote confirmado (True).
+    - 0 o 1: no hay brote (False); no enviar el campo también valdría 0, pero
+      con datos completos enviar False suele acertar.
+    - 2: zona gris. Devolver None para NO enviar ``brote`` y mandar el caso a
+      revisión. Evita el -1 de un falso positivo/negativo y permite complementar
+      después del visto bueno.
+    """
+    if n is None:
+        return None
+    if n >= MINIMO_CASOS_BROTE:
+        return True
+    if n <= 1:
+        return False
+    return None

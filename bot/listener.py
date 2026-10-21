@@ -35,7 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente, ApiError  # noqa: E402
-from clasificador import Clasificador, caso_para_api, resultados_a_casos  # noqa: E402
+from clasificador import Clasificador, caso_para_api, fusionar_respuesta, resultados_a_casos  # noqa: E402
+from nivel2 import decidir_brote  # noqa: E402
 from extras import Extras  # noqa: E402
 from supabase_repositorio import RepositorioSupabase  # noqa: E402
 
@@ -49,6 +50,10 @@ BITACORA = CACHE / "listener_bitacora.jsonl"    # historial de decisiones
 # Casos dudosos: se revisan con el coordinador antes de registrarlos.
 PENDIENTES_REVISION = CACHE / "revision_pendiente.json"
 CONFIANZA_DUDOSA = float(os.getenv("CONFIANZA_DUDOSA", "0.55"))
+# Interruptor de seguridad: el agente NO envía nada a POST /casos ni avisos
+# hasta que se defina PERMITIR_ENVIOS=1 en su .env. Así se pueden verificar
+# los reportes nuevos sin arriesgar puntos.
+ENVIOS_HABILITADOS = os.getenv("PERMITIR_ENVIOS", "0") == "1"
 
 
 def ahora() -> str:
@@ -79,15 +84,20 @@ class Listener:
         self.clf = Clasificador(self.api, con_ia=True)
         self.intervalo = intervalo
         self.refresco = refresco_min * 60
-        self.enviar = enviar
+        self.enviar = bool(enviar and ENVIOS_HABILITADOS)
         self.preguntas = preguntas
         self.telegram = telegram
         self.vigilante = vigilante
         self.repo = RepositorioSupabase()
-        self.extras = Extras(self.api, seco=not avisos_reales, repo=self.repo) if extras else None
+        self.extras = Extras(
+            self.api,
+            seco=(not avisos_reales or not self.enviar),
+            repo=self.repo,
+        ) if extras else None
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
         self.estado = cargar_json(ESTADO, {"procesados": [], "enviados": [], "iniciado": ahora()})
         self.estado.setdefault("brotes_avisados", [])
+        self.estado.setdefault("dudosos_avisados", [])
         # Respuestas ya fusionadas con su reporte original. Permite migrar
         # estados viejos en los que la respuesta se procesó con id equivocado.
         self.estado.setdefault("respuestas_aplicadas", [])
@@ -108,6 +118,9 @@ class Listener:
         self.ultimo_refresco = time.time()
         self.nuevos_total = 0
         print(f"[{ahora()}] Supabase: {'conectado' if self.repo.activo else 'no configurado (solo caché local)'}")
+        if enviar and not self.enviar:
+            print(f"[{ahora()}] PAUSA DE ENVÍOS: define PERMITIR_ENVIOS=1 en el .env "
+                  "para registrar casos nuevos y avisos. Por ahora solo se clasifica y guarda en caché.")
 
     # ---------- clasificación ----------
 
@@ -169,42 +182,10 @@ class Listener:
         print(f"[{ahora()}] reconstruidos {len(faltan)} caso(s) ya enviados para el historial de brote")
 
     @staticmethod
-    def _fusionar_respuesta(padre: dict, respuesta: dict) -> dict:
-        """Combina el mensaje original con la respuesta del productor.
-
-        El resultado se clasifica con el ``id`` del padre: la API exige que
-        una respuesta a una pregunta se registre con el folio original, no
-        con el id del mensaje de respuesta.
-        """
-        fusionado = dict(padre)
-        texto = " ".join(
-            x for x in (padre.get("texto"), respuesta.get("texto")) if x
-        ).strip()
-        if texto:
-            fusionado["texto"] = texto
-            if padre.get("foto_url"):
-                # Mantener la foto permite la fusión visión + texto del padre.
-                fusionado["tipo"] = "foto"
-                fusionado["audio_url"] = None
-            elif respuesta.get("foto_url"):
-                fusionado["tipo"] = "foto"
-                fusionado["foto_url"] = respuesta["foto_url"]
-                fusionado["audio_url"] = None
-            else:
-                # Para voz o texto, la respuesta escrita manda y evita volver
-                # a transcribir un audio que ya se había procesado.
-                fusionado["tipo"] = "texto"
-                fusionado["audio_url"] = None
-                fusionado["foto_url"] = None
-        else:
-            for clave in ("audio_url", "foto_url"):
-                if respuesta.get(clave):
-                    fusionado[clave] = respuesta[clave]
-            if respuesta.get("tipo"):
-                fusionado["tipo"] = respuesta["tipo"]
-        fusionado["respuesta_a"] = None
-        fusionado["id"] = padre["id"]
-        return fusionado
+    def _fusionar_respuesta(padre: dict, respuesta: dict,
+                            plaga_padre: str | None = None) -> dict:
+        """Combina el mensaje original con la respuesta del productor."""
+        return fusionar_respuesta(padre, respuesta, plaga_padre)
 
     def procesar(self, reporte: dict) -> dict:
         try:
@@ -218,7 +199,13 @@ class Listener:
             print(f"[{ahora()}] aviso: respuesta {reporte.get('id')} sin padre "
                   f"{reporte.get('respuesta_a')}; se procesa como reporte suelto")
         entrada = padre or reporte
-        para_clasificar = self._fusionar_respuesta(padre, reporte) if padre else reporte
+        plaga_padre = None
+        if padre:
+            caso_padre = self.casos.get(padre.get("id")) or {}
+            if caso_padre.get("es_plaga"):
+                plaga_padre = caso_padre.get("plaga")
+        para_clasificar = (self._fusionar_respuesta(padre, reporte, plaga_padre)
+                           if padre else reporte)
         if es_respuesta and padre:
             # La respuesta aporta datos nuevos: el padre sale de la cola de
             # dudosos para registrarse/complementarse con la información nueva.
@@ -453,22 +440,60 @@ class Listener:
                 continue
             if reporte.get("respuesta_a"):
                 continue
+            # Si la API YA tiene este reporte registrado (por el flujo normal
+            # o por sesiones anteriores), no hay nada que hacer: marcarlo
+            # como enviado para que la reconcilación no lo re-procese y no lo
+            # aparque como falso dudoso (ruido tipo R-2001..R-2090).
+            try:
+                st = self.api.validar_caso(caso_para_api(caso))
+                if isinstance(st, dict) and st.get("ya_registrado_antes"):
+                    self.estado["enviados"].append(rid)
+                    continue
+            except Exception as exc:
+                print(f"[{ahora()}] aviso validando {rid} en reconciliación: {exc}")
+            # Igual que en el flujo normal (FASE 3): los casos que el motor no
+            # identifica bien NO se registran a ciegas — se aparcan para
+            # revisión conjunta. Sin esto, la reconciliación enviaba textos
+            # vagos ("Algo le está pasando a mi siembra") con plaga
+            # "desconocida" que la API no puntúa en algunos cultivos
+            # (regresión real R-2097, frijol: plaga quedó null y perdió +1).
+            detalle = {"texto": reporte.get("texto") or "", "confianza": caso.get("confianza") or 0}
+            motivo = self._es_dudoso(detalle, caso)
+            if motivo:
+                self._parkear_dudoso(reporte, detalle, caso, motivo)
+                continue
             if self._registrar_caso(reporte, caso):
-                self.acciones_extra(reporte, {"texto": "", "confianza": caso.get("confianza") or 0}, caso)
+                self.acciones_extra(reporte, detalle, caso)
 
     def _recalcular_brotes(self, reportes_por_id: dict) -> None:
-        """Reaplica la regla de brote sobre el conjunto completo de casos."""
+        """Reaplica la regla de brote sobre el conjunto completo de casos.
+
+        Guarda en el caso el conteo ``_brote_n`` y las referencias auditables.
+        Para casos nuevos aplica la política conservadora: si ``n == 2`` no se
+        envía ``brote`` y se marca ``_brote_dudoso`` para revisión conjunta.
+        """
         try:
-            brotes = self.clf.brotes_de_casos(list(self.casos.values()), reportes_por_id)
-            for rid, valor_brote in brotes.items():
-                if rid not in self.casos:
+            detalles = self.clf.evaluar_brotes(list(self.casos.values()), reportes_por_id)
+            for rid, info in detalles.items():
+                caso = self.casos.get(rid)
+                if not caso:
                     continue
-                valor_brote = bool(valor_brote)
-                if bool(self.casos[rid].get("brote")) == valor_brote:
+                caso["_brote_n"] = info["n"]
+                caso["_brote_refs"] = info["refs"]
+                if rid in self.estado["enviados"]:
+                    # Ya está en la API: no se puede cambiar; solo se audita.
                     continue
-                self.casos[rid]["brote"] = valor_brote
+                decision = decidir_brote(info["n"])
+                if decision is None:
+                    caso.pop("brote", None)
+                    caso["_brote_dudoso"] = True
+                    continue
+                caso.pop("_brote_dudoso", None)
+                if bool(caso.get("brote")) == decision:
+                    continue
+                caso["brote"] = decision
                 try:
-                    self.repo.actualizar_brote(rid, valor_brote)
+                    self.repo.actualizar_brote(rid, decision)
                 except Exception as exc:
                     print(f"[{ahora()}] aviso Supabase (brote {rid}): {exc}")
         except Exception as exc:
@@ -479,18 +504,28 @@ class Listener:
         guardar_json(ESTADO, self.estado)
 
     def _es_dudoso(self, detalle: dict, caso: dict) -> str | None:
-        """Devuelve el motivo si el caso merece revisión conjunta, o None."""
+        """Devuelve el motivo si el caso merece revisión conjunta, o None.
+
+        Regla de la sesión (21-oct, tarde, Rafa): TODO caso con ``brote=True``
+        se aparca SIEMPRE, sin importar la confianza, para evaluarlo juntos y
+        dar el visto bueno antes de registrarlo. Un brote mal marcado vale
+        -1 punto (MISA 100% vs nuestro ~92%), así que ninguna brote se manda
+        a ciegas.
+        """
         if not caso.get("es_plaga"):
             conf = detalle.get("confianza") or 0
             if float(conf) >= CONFIANZA_DUDOSA:
                 return None
         conf = float(detalle.get("confianza") or 0)
+        # 0) BROTE: siempre requiere visto bueno (regla de Rafa).
+        if caso.get("brote"):
+            return f"brote activo (evaluar juntos antes de registrar) · n={caso.get('_brote_n', '?')} · conf={conf:.2f}"
+        if caso.get("_brote_dudoso"):
+            return f"brote en el límite (n={caso.get('_brote_n', 2)}; no se envía brote hasta revisar)"
         if caso.get("plaga") == "desconocida":
             return "plaga desconocida (el motor no identificó qué plaga es)"
         if conf < CONFIANZA_DUDOSA:
             return f"confianza baja ({conf:.2f})"
-        if caso.get("brote") and conf < 0.75:
-            return "brote marcado con confianza media (revisar antes de enviar)"
         return None
 
     def _parkear_dudoso(self, reporte: dict, detalle: dict, caso: dict, motivo: str) -> None:
@@ -502,24 +537,40 @@ class Listener:
             except json.JSONDecodeError:
                 pendientes = []
         pendientes = [p for p in pendientes if p.get("reporte_id") != caso["reporte_id"]]
+        rid = str(caso["reporte_id"])
         pendientes.append({
-            "reporte_id": caso["reporte_id"],
+            "reporte_id": rid,
             "recibido": reporte.get("recibido"),
             "texto": (detalle.get("texto") or "")[:280],
             "motivo": motivo,
             "caso": caso_para_api(caso),
+            "n": caso.get("_brote_n"),
+            "refs": caso.get("_brote_refs") or [],
+            "brote": caso.get("brote"),
+            "sugerencia": ("marcar brote" if caso.get("brote")
+                           else "marcar sin brote" if caso.get("_brote_dudoso")
+                           else "revisar"),
             "procesado": ahora(),
         })
         guardar_json(PENDIENTES_REVISION, pendientes)
-        self._parkeados.add(str(caso["reporte_id"]))
-        print(f"[{ahora()}] CASO DUDOSO {caso['reporte_id']}: {motivo} -> pendiente de revisión")
-        if self.telegram:
-            try:
-                from telegram_notificador import alerta_dudoso
+        self._parkeados.add(rid)
+        print(f"[{ahora()}] CASO DUDOSO {rid}: {motivo} -> pendiente de revisión")
+        # La notificación no depende del hilo del bot: el notificador ya sabe
+        # trabajar en seco si faltan TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.
+        if rid in self.estado["dudosos_avisados"]:
+            return
+        try:
+            from telegram_notificador import alerta_dudoso
 
-                alerta_dudoso(caso, motivo, detalle)
-            except Exception as exc:
-                print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
+            enviado = alerta_dudoso(caso, motivo, detalle,
+                                    refs=caso.get("_brote_refs"))
+            if enviado:
+                self.estado["dudosos_avisados"].append(rid)
+                print(f"[{ahora()}] alerta Telegram enviada: {rid}")
+            else:
+                print(f"[{ahora()}] alerta Telegram no enviada (seco o error): {rid}")
+        except Exception as exc:
+            print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
 
     def _arrancar_vigilante(self) -> None:
         """Avisa al coordinador por Telegram cuando hay reportes por verificar."""
@@ -675,6 +726,9 @@ def main() -> None:
     parser.add_argument("--telegram", action="store_true", help="Activar el agente del bot de Telegram")
     parser.add_argument("--vigilante", action="store_true",
                         help="Avisa por Telegram reportes por verificar / dudosos (no registra nada)")
+    parser.add_argument("--resolver-dudosos", action="store_true",
+                        help="Procesa la cola de dudosos con el flujo validado y registra "   
+                             "solo lo seguro (+Telegram con resultado y posición)")
     parser.add_argument("--reiniciar", action="store_true", help="Ignorar el estado y reprocesar todo")
     args = parser.parse_args()
 
@@ -687,6 +741,17 @@ def main() -> None:
                         extras=args.extras, preguntas=args.preguntas,
                         avisos_reales=args.avisos_reales, telegram=args.telegram,
                         vigilante=args.vigilante)
+    if args.resolver_dudosos:
+        try:
+            import threading
+            from resolver_cola import ResolverCola
+
+            resolver = ResolverCola(api=listener.api, telegram=args.telegram)
+            hilo = threading.Thread(target=resolver.correr, daemon=True, name="resolver-dudosos")
+            hilo.start()
+            print(f"[{ahora()}] resolver de dudosos activo (hilo {hilo.name})")
+        except Exception as exc:
+            print(f"[{ahora()}] no se pudo arrancar el resolver de dudosos: {exc}")
     listener.correr(una_vez=args.una_vez)
 
 

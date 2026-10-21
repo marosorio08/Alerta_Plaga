@@ -45,7 +45,7 @@ except Exception:  # pragma: no cover
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente  # noqa: E402
-from clasificador import Clasificador  # noqa: E402
+from clasificador import Clasificador, caso_para_api  # noqa: E402
 from nivel2 import _a_datetime, elegir_tecnico, extraer_pct  # noqa: E402
 from motor_audio_foto import describir_foto_consenso, transcribir_con_consenso  # noqa: E402
 from supabase_repositorio import RepositorioSupabase  # noqa: E402
@@ -59,6 +59,8 @@ REPORTES_BOT = CACHE / "reportes_bot.json"
 # ~/app/cache en el servidor). El bot la lee en CADA petición para estar al día.
 CASOS_BOT = Path(os.getenv("CASOS_SALIDA") or (CACHE / "casos_propuestos.json"))
 INCIDENTES = CACHE / "incidentes.json"
+# Cola de casos dudosos que la sesión revisa juntos antes de registrarlos.
+PENDIENTES_BOT = CACHE / "revision_pendiente.json"
 ZONA_MX = timezone(timedelta(hours=-6))
 
 
@@ -858,8 +860,73 @@ class BotTelegram:
             return f"Ups, error conversando: {exc}"
 
     # -------------------------------------------------------- botones (avisos)
+    # ---------------------------------------------------- visto bueno (brotes)
+    def _leer_pendientes(self) -> list[dict]:
+        try:
+            return json.loads(PENDIENTES_BOT.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _guardar_pendientes(self, pendientes: list[dict]) -> None:
+        try:
+            tmp = PENDIENTES_BOT.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(pendientes, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            tmp.replace(PENDIENTES_BOT)
+        except OSError as exc:
+            print(f"[telegram] no pude guardar pendientes: {exc}")
+
+    def _quitar_pendiente(self, rid: str) -> dict | None:
+        """Quita rid de la cola de dudosos y devuelve la entrada quitada."""
+        pendientes = self._leer_pendientes()
+        restante = [p for p in pendientes if p.get("reporte_id") != rid]
+        if len(restante) == len(pendientes):
+            return None
+        self._guardar_pendientes(restante)
+        return next(p for p in pendientes if p.get("reporte_id") == rid)
+
+    def _pendiente(self, reporte_id: str) -> dict | None:
+        return next((p for p in self._leer_pendientes()
+                     if p.get("reporte_id") == reporte_id), None)
+
+    def _registrar_pendiente(self, pendiente: dict, brote: bool | None = None) -> str:
+        """Registra el payload de la cola SOLO si la API confirma que sigue libre.
+
+        No quita el caso de la cola hasta que el registro fue exitoso; así un
+        fallo de red o de formato no hace perder el caso.
+        """
+        rid = str(pendiente.get("reporte_id"))
+        caso = dict(pendiente.get("caso") or {})
+        if not caso or not caso.get("reporte_id"):
+            return f"⚠️ {rid} estaba en la cola pero sin payload; no se envió."
+        if brote is not None:
+            caso["brote"] = brote
+        caso = caso_para_api(caso)
+        try:
+            st = self.api.validar_caso(caso)
+            if isinstance(st, dict) and st.get("ya_registrado_antes"):
+                self._quitar_pendiente(rid)
+                return f"ℹ️ {rid} ya estaba registrado en la API; se retiró de la cola."
+        except Exception as exc:
+            return f"⚠️ No pude validar {rid}: {exc}"
+        try:
+            resp = self.api.registrar_caso(caso)
+        except Exception as exc:
+            return f"⚠️ No se pudo registrar {rid}: {str(exc)[:200]}"
+        self._quitar_pendiente(rid)
+        pts = resp.get("puntos", "—") if isinstance(resp, dict) else "—"
+        return (f"✅ {rid} REGISTRADO con tu visto bueno "
+                f"(brote: {caso.get('brote')}) · pts API: {pts}")
+
     def aprobar(self, reporte_id: str) -> str:
-        """✅ Aprobar: entrega el folio al productor (POST /avisos tipo folio)."""
+        """✅ Aprobar: registra el payload propuesto para un caso de la cola.
+
+        Si no está en la cola, conserva el comportamiento de folio (POST /avisos).
+        """
+        pendiente = self._pendiente(reporte_id)
+        if pendiente:
+            return self._registrar_pendiente(pendiente)
+        # caso normal: folio (comportamiento original)
         reporte = next((r for r in _leer_json("reportes", [])
                         if r.get("id") == reporte_id), None)
         para = [reporte.get("productor_id")] if reporte and reporte.get("productor_id") else []
@@ -877,6 +944,20 @@ class BotTelegram:
             return f"✅ {reporte_id} aprobado · folio enviado al productor"
         except Exception as exc:
             return f"⚠️ No se pudo enviar el folio: {exc}"
+
+    def sin_brote(self, reporte_id: str) -> str:
+        """🚫 Registrar el caso de la cola con ``brote=false``."""
+        pendiente = self._pendiente(reporte_id)
+        if not pendiente:
+            return f"⚠️ {reporte_id} no está en la cola de dudosos."
+        return self._registrar_pendiente(pendiente, brote=False)
+
+    def marcar_brote(self, reporte_id: str) -> str:
+        """🦠 Registrar el caso de la cola con ``brote=true``."""
+        pendiente = self._pendiente(reporte_id)
+        if not pendiente:
+            return f"⚠️ {reporte_id} no está en la cola de dudosos."
+        return self._registrar_pendiente(pendiente, brote=True)
 
     def cambiar_tecnico(self, reporte_id: str) -> str:
         """🔁 Cambiar técnico: elige al siguiente candidato válido y avisa."""
@@ -913,7 +994,15 @@ class BotTelegram:
             return f"⚠️ No se pudo reasignar: {exc}"
 
     def falsa_alarma(self, reporte_id: str) -> str:
-        """🚫 Falsa alarma: avisa al productor que no parece plaga."""
+        """🚫 Revisar / Falsa alarma:
+        - Si el caso estaba en la cola de dudosos, solo se QUITA de la cola
+          (no se registra, no se manda aviso al productor): quedó revisado
+          con el coordinador y descartado.
+        - Si no estaba en la cola, conserva el comportamiento original
+          (aviso de falsa alarma por POST /avisos).
+        """
+        if self._quitar_pendiente(reporte_id):
+            return f"🚫 {reporte_id} retirado de la cola de dudosos (no se registró)."
         reporte = next((r for r in _leer_json("reportes", [])
                         if r.get("id") == reporte_id), None)
         para = [reporte.get("productor_id")] if reporte and reporte.get("productor_id") else []
@@ -936,6 +1025,10 @@ class BotTelegram:
             accion, _, rid = data.partition(":")
             if accion == "aprobar":
                 texto = self.aprobar(rid)
+            elif accion == "sin_brote":
+                texto = self.sin_brote(rid)
+            elif accion == "marcar_brote":
+                texto = self.marcar_brote(rid)
             elif accion == "tecnico":
                 texto = self.cambiar_tecnico(rid)
             elif accion == "falsa":
