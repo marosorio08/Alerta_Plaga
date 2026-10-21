@@ -48,6 +48,7 @@ SUPABASE_URL={os.getenv('SUPABASE_URL', '')}
 SUPABASE_SERVICE_ROLE_KEY={os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')}
 TELEGRAM_BOT_TOKEN={os.getenv('TELEGRAM_BOT_TOKEN', '')}
 TELEGRAM_CHAT_ID={os.getenv('TELEGRAM_CHAT_ID', '')}
+TELEGRAM_CHATS_EXTRA={os.getenv('TELEGRAM_CHATS_EXTRA', '')}
 # el agente escribe los casos donde los lee el dashboard
 CASOS_SALIDA=/home/equipo02/app/cache/casos_propuestos.json
 """

@@ -34,8 +34,25 @@ SEMAFORO_EMOJI = {"rojo": "🔴", "naranja": "🟠", "amarillo": "🟡", "verde"
 SEMAFORO_TEXTO = {"rojo": "ROJO", "naranja": "NARANJA", "amarillo": "AMARILLO", "verde": "VERDE"}
 
 
+def _chats_destino() -> list[str]:
+    """Lista de chat_ids a los que se envía (coordinador + extra por comas)."""
+    chats: list[str] = []
+    principal = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+    if principal:
+        chats.append(principal)
+    extra = os.getenv("TELEGRAM_CHATS_EXTRA") or ""
+    for c in extra.replace(";", ",").split(","):
+        c = c.strip()
+        if c:
+            chats.append(c)
+    # dedupe preservando orden
+    vistos: set[str] = set()
+    unicos = [c for c in chats if not (c in vistos or vistos.add(c))]
+    return unicos
+
+
 def configurado() -> bool:
-    return bool(os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"))
+    return bool(os.getenv("TELEGRAM_BOT_TOKEN") and _chats_destino())
 
 
 def _llamar(metodo: str, datos: dict) -> dict | None:
@@ -54,19 +71,24 @@ def _llamar(metodo: str, datos: dict) -> dict | None:
 
 
 def enviar(texto: str, botones: list[list[dict]] | None = None) -> bool:
-    """Envía un mensaje al coordinador. Sin configuración, solo lo imprime."""
+    """Envía un mensaje a todos los chats configurados. Sin configuración, imprime."""
+    destinos = _chats_destino()
     if not configurado():
         print("[telegram seco] " + texto.replace("\n", " | ")[:220])
         return False
-    datos = {
-        "chat_id": os.getenv("TELEGRAM_CHAT_ID"),
-        "text": texto,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-    if botones:
-        datos["reply_markup"] = {"inline_keyboard": botones}
-    return _llamar("sendMessage", datos) is not None
+    ok = True
+    for chat_id in destinos:
+        datos = {
+            "chat_id": chat_id,
+            "text": texto,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if botones:
+            datos["reply_markup"] = {"inline_keyboard": botones}
+        if _llamar("sendMessage", datos) is None:
+            ok = False
+    return ok
 
 
 def alerta_caso(caso: dict, plaga: dict | None, parcela: dict | None,
