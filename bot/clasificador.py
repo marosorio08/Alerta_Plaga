@@ -23,10 +23,11 @@ import json
 import os
 import re
 from collections import Counter
+from datetime import timedelta
 from pathlib import Path
 
 from api_cliente import ApiCliente
-from nivel2 import contar_casos_cercanos, resolver as resolver_nivel2
+from nivel2 import _a_datetime, contar_casos_cercanos, resolver as resolver_nivel2
 from nivel2 import MINIMO_CASOS_BROTE  # noqa: E402 (mismo módulo, import explícito)
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -160,6 +161,7 @@ class Clasificador:
         self.plagas = cargar_catalogo("plagas")
         self.con_ia = con_ia and bool(os.getenv("OPENROUTER_API_KEY"))
         self._tecnicos_cache: dict[str, list] = {}
+        self._visitas: set[str] | None = None
 
     def recargar_catalogo(self) -> None:
         """Vuelve a bajar /plagas y /parcelas de la API.
@@ -331,8 +333,11 @@ class Clasificador:
             # voz y fotos sin pie: motor multimodal (STT/visión) con caché
             resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa, rid=reporte.get("id"))
 
-        # 2.7 seguimientos: si responde a otro reporte, se usa como contexto
+        # 2.7 seguimientos: si responde a otro reporte, o hay un caso abierto
+        # del mismo productor/parcela hace <24 h sin visita, se usa como contexto
         padre = self._reporte_padre(reporte)
+        if not padre:
+            padre = self._reporte_padre_por_ventana(reporte)
         if padre:
             resultado = self._aplicar_seguimiento(resultado, padre, cultivo, reporte)
 
@@ -516,6 +521,52 @@ class Clasificador:
             return None
         return next((r for r in todos if r["id"] == padre_id), None)
 
+    def _reporte_padre_por_ventana(self, reporte: dict) -> dict | None:
+        """Seguimiento por regla del reto: mismo productor o parcela con un
+        caso abierto hace menos de 24 h y sin visita registrada (GET /visitas).
+
+        Solo cuenta mensajes recibidos ANTES que el actual. Si el caso abierto
+        más reciente ya tiene visita, no es seguimiento (ya fue atendido).
+        """
+        t_actual = _a_datetime(reporte.get("recibido"))
+        if t_actual is None:
+            return None
+        parcela_id = reporte.get("parcela_id")
+        productor_id = reporte.get("productor_id")
+        if not (parcela_id or productor_id):
+            return None
+
+        if self._visitas is None:
+            try:
+                self._visitas = {str(v.get("reporte_id")) for v in cargar_catalogo("visitas")}
+            except Exception:
+                self._visitas = set()
+        try:
+            todos = cargar_catalogo("reportes")
+        except Exception:
+            todos = []
+
+        limite = t_actual - timedelta(hours=24)
+        candidatos = []
+        for r in todos:
+            if r.get("id") == reporte.get("id"):
+                continue
+            mismo = ((parcela_id and r.get("parcela_id") == parcela_id)
+                     or (productor_id and r.get("productor_id") == productor_id))
+            if not mismo:
+                continue
+            t_r = _a_datetime(r.get("recibido"))
+            if t_r is None or not (limite <= t_r <= t_actual):
+                continue
+            candidatos.append((t_r, r))
+        if not candidatos:
+            return None
+        candidatos.sort(key=lambda x: x[0], reverse=True)
+        mas_reciente = candidatos[0][1]
+        if mas_reciente["id"] in self._visitas:
+            return None
+        return mas_reciente
+
     def _aplicar_seguimiento(self, resultado: dict, padre: dict, cultivo: str | None,
                              reporte: dict) -> dict:
         """Usa el caso previo como contexto sin arriesgar una especie inventada.
@@ -660,7 +711,10 @@ def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
             "seguimiento_de": res.get("seguimiento_de"),
         }
 
-        if es_plaga and plaga and plaga != "desconocida":
+        # un seguimiento NO abre caso nuevo: la plaga se hereda pero no lleva
+        # semáforo, técnico ni brote (tabla de puntos de la sección 4 del reto)
+        if (es_plaga and plaga and plaga != "desconocida"
+                and not res.get("seguimiento_de")):
             nivel2 = clasif.resolver_nivel2(r, plaga, res)
             if nivel2:
                 caso["semaforo"] = nivel2["semaforo"]

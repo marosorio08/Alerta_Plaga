@@ -70,13 +70,15 @@ def guardar_json(archivo: Path, datos) -> None:
 
 class Listener:
     def __init__(self, intervalo: int = 20, refresco_min: int = 10, enviar: bool = False,
-                 extras: bool = False, preguntas: bool = False, avisos_reales: bool = False) -> None:
+                 extras: bool = False, preguntas: bool = False, avisos_reales: bool = False,
+                 telegram: bool = False) -> None:
         self.api = ApiCliente()
         self.clf = Clasificador(self.api, con_ia=True)
         self.intervalo = intervalo
         self.refresco = refresco_min * 60
         self.enviar = enviar
         self.preguntas = preguntas
+        self.telegram = telegram
         self.extras = Extras(self.api, seco=not avisos_reales) if extras else None
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
         self.estado = cargar_json(ESTADO, {"procesados": [], "enviados": [], "iniciado": ahora()})
@@ -207,6 +209,21 @@ class Listener:
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
 
+    def _arrancar_bot_telegram(self) -> None:
+        """Levanta el agente del bot de Telegram en un hilo en segundo plano."""
+        try:
+            import threading
+
+            from bot_telegram import BotTelegram
+
+            bot = BotTelegram(self.api)
+            hilo = threading.Thread(target=bot.correr, kwargs={"una_vez": False},
+                                    daemon=True, name="bot-telegram")
+            hilo.start()
+            print(f"[{ahora()}] bot de Telegram activo (hilo {hilo.name})")
+        except Exception as exc:
+            print(f"[{ahora()}] no se pudo arrancar el bot de Telegram: {exc}")
+
     def acciones_extra(self, reporte: dict, detalle: dict, caso: dict) -> None:
         """Telegram, avisos y preguntas para un caso recién procesado."""
         plaga = next((p for p in self.clf.plagas if p["id"] == caso.get("plaga")), None)
@@ -281,6 +298,8 @@ class Listener:
     def correr(self, una_vez: bool = False) -> None:
         print(f"[{ahora()}] listener iniciado | intervalo {self.intervalo}s | "
               f"registro automático: {'SÍ' if self.enviar else 'NO'}")
+        if self.telegram:
+            self._arrancar_bot_telegram()
         while True:
             inicio = time.time()
             try:
@@ -318,6 +337,7 @@ def main() -> None:
     parser.add_argument("--extras", action="store_true", help="Activar avisos (cuarentenarias, asignación, brotes)")
     parser.add_argument("--avisos-reales", action="store_true", help="Enviar avisos a la API (si no, modo seco)")
     parser.add_argument("--preguntas", action="store_true", help="Hacer preguntas a los productores")
+    parser.add_argument("--telegram", action="store_true", help="Activar el agente del bot de Telegram")
     parser.add_argument("--reiniciar", action="store_true", help="Ignorar el estado y reprocesar todo")
     args = parser.parse_args()
 
@@ -328,7 +348,7 @@ def main() -> None:
 
     listener = Listener(intervalo=args.intervalo, refresco_min=args.refresco, enviar=args.enviar,
                         extras=args.extras, preguntas=args.preguntas,
-                        avisos_reales=args.avisos_reales)
+                        avisos_reales=args.avisos_reales, telegram=args.telegram)
     listener.correr(una_vez=args.una_vez)
 
 

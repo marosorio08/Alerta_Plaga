@@ -311,6 +311,25 @@ def main() -> None:
     revisar("sin parcela no se manda brote (no califica)",
             "brote" not in caso_sin, f"-> {caso_sin.get('brote')}")
 
+    print("\n[16] Nivel 2 — seguimientos por ventana (24 h y sin visita)")
+    # R-2043 es del mismo productor (PR-191), su caso abierto más reciente es
+    # R-2035 (<24 h) y NO tiene visita en /visitas -> es seguimiento.
+    # (R-2035 NO lo es: su previo R-2032 ya tiene visita.)
+    reportes_full = json.loads((CACHE / "reportes.json").read_text(encoding="utf-8"))
+    rep_2043 = next((r for r in reportes_full if r["id"] == "R-2043"), None)
+    rep_2035 = next((r for r in reportes_full if r["id"] == "R-2035"), None)
+    if rep_2043 and rep_2035 and rep_2035.get("productor_id") == rep_2043.get("productor_id"):
+        clf_seg = crear_clasificador()
+        res = clf_seg.clasificar_reporte(rep_2043)
+        revisar("detecta seguimiento por ventana (mismo productor)",
+                res.get("seguimiento_de") == "R-2035", f"-> {res.get('seguimiento_de')}")
+        caso_seg = resultados_a_casos([rep_2043], clf_seg)[0]
+        revisar("el seguimiento hereda plaga pero NO lleva semáforo ni técnico ni brote",
+                not caso_seg.get("semaforo") and not caso_seg.get("tecnico_id")
+                and not caso_seg.get("brote"), f"-> {caso_seg}")
+    else:
+        print("  (se omite: caché sin R-2043/R-2035)")
+
     print("\n[10] Robustez ante catálogo cambiado por los organizadores")
     clf_nuevo = crear_clasificador()
     clf_nuevo.plagas = clf_nuevo.plagas + [{
