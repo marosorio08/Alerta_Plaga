@@ -26,6 +26,7 @@ from collections import Counter
 from pathlib import Path
 
 from api_cliente import ApiCliente
+from nivel2 import resolver as resolver_nivel2
 
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
@@ -146,6 +147,7 @@ class Clasificador:
         self.parcelas = {p["id"]: p for p in cargar_catalogo("parcelas")}
         self.plagas = cargar_catalogo("plagas")
         self.con_ia = con_ia and bool(os.getenv("OPENROUTER_API_KEY"))
+        self._tecnicos_cache: dict[str, list] = {}
 
     def recargar_catalogo(self) -> None:
         """Vuelve a bajar /plagas y /parcelas de la API.
@@ -399,8 +401,41 @@ class Clasificador:
         return {"es_plaga": True, "plaga": plaga, "confianza": float(res.get("confianza", 0.5)),
                 "motor": "vision", "razon": f"visión: {str(res.get('sintomas'))[:100]}"}
 
-    # ---------- 2.7 seguimientos (respuesta_a) ----------
+    # ---------- Nivel 2: prioridad, semáforo y técnico ----------
 
+    def tecnicos_en(self, momento: str | None) -> list:
+        """GET /tecnicos?momento=<recibido>, con caché por momento.
+
+        La carga cambia con el tiempo, así que la consulta se hace con la hora
+        del mensaje y no con la hora de procesamiento (regla del reto).
+        """
+        clave = momento or "ahora"
+        if clave in self._tecnicos_cache:
+            return self._tecnicos_cache[clave]
+        try:
+            datos = self.api.get("tecnicos", {"momento": momento}) or []
+        except Exception:
+            datos = []
+        self._tecnicos_cache[clave] = datos
+        return datos
+
+    def resolver_nivel2(self, reporte: dict, plaga_id: str, resultado: dict) -> dict:
+        """Calcula pct, prioridad, semáforo y técnico para un caso nuevo."""
+        if not plaga_id or plaga_id == "desconocida":
+            return {}
+        parcela = self.parcelas.get(reporte.get("parcela_id") or "")
+        plaga = next((p for p in self.plagas if p["id"] == plaga_id), None)
+        if not parcela or not plaga:
+            return {}
+
+        texto = resultado.get("texto") or reporte.get("texto") or ""
+        tecnicos = self.tecnicos_en(reporte.get("recibido"))
+        n2 = resolver_nivel2(plaga, parcela, texto, tecnicos)
+        datos = n2.como_dict()
+        datos["detalle_nivel2"] = n2.detalle
+        return datos
+
+    # ---------- 2.7 seguimientos (respuesta_a) ----------
     def _reporte_padre(self, reporte: dict) -> dict | None:
         """Devuelve el reporte al que éste responde, si existe."""
         padre_id = reporte.get("respuesta_a")
@@ -546,20 +581,40 @@ class Clasificador:
 
 
 def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
-    """Convierte la clasificación al formato de POST /casos."""
+    """Convierte la clasificación al formato de POST /casos (Nivel 2 incluido)."""
     casos = []
     for r in reportes:
         res = clasif.clasificar_reporte(r)
+        es_plaga = bool(res["es_plaga"])
+        plaga = res.get("plaga") if es_plaga else None
         caso = {
             "reporte_id": r["id"],
-            "es_plaga": bool(res["es_plaga"]),
-            "plaga": res.get("plaga") if res.get("es_plaga") else None,
-            "urgente": bool(res.get("urgente", False)),
+            "es_plaga": es_plaga,
+            "plaga": plaga,
         }
-        if not caso["es_plaga"]:
-            caso["plaga"] = None
+
+        if es_plaga and plaga and plaga != "desconocida":
+            nivel2 = clasif.resolver_nivel2(r, plaga, res)
+            if nivel2:
+                caso["semaforo"] = nivel2["semaforo"]
+                caso["tecnico_id"] = nivel2["tecnico_id"]
+                caso["prioridad"] = nivel2["prioridad"]
+                caso["_nivel2"] = nivel2["detalle_nivel2"]
+                caso["_pct"] = nivel2["pct"]
+
+        # compatibilidad con el dashboard (el campo urgente ya no se califica)
+        caso["urgente"] = caso.get("semaforo") in ("rojo", "naranja")
         casos.append(caso)
     return casos
+
+
+# campos que acepta POST /casos; el resto es información local
+CAMPOS_API = ("reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id", "prioridad", "caso")
+
+
+def caso_para_api(caso: dict) -> dict:
+    """Deja solo lo que la API entiende (descarta claves internas como _pct)."""
+    return {k: v for k, v in caso.items() if k in CAMPOS_API}
 
 
 if __name__ == "__main__":
@@ -572,5 +627,6 @@ if __name__ == "__main__":
     for r in reportes:
         res = clf.clasificar_reporte(r)
         caso = resultados_a_casos([r], clf)[0]
-        print(f"{r['id']:<7} {r['tipo']:<6} plaga={str(caso['plaga']):<18} urg={str(caso['urgente']):<5} "
-              f"conf={res['confianza']:.2f} inj={res['injection']} | {res['razon'][:70]}")
+        print(f"{r['id']:<7} {r['tipo']:<6} plaga={str(caso['plaga']):<18} "
+              f"sem={str(caso.get('semaforo')):<8} tec={str(caso.get('tecnico_id')):<5} "
+              f"pri={caso.get('prioridad')} conf={res['confianza']:.2f} inj={res['injection']}")

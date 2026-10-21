@@ -154,9 +154,76 @@ def main() -> None:
 
     print("\n[9] Formato para POST /casos")
     casos = resultados_a_casos(reportes[:5], clf)
-    revisar("cada caso tiene las 4 claves",
-            all(set(c) == {"reporte_id", "es_plaga", "plaga", "urgente"} for c in casos))
+    revisar("cada caso trae los campos obligatorios",
+            all({"reporte_id", "es_plaga", "plaga"} <= set(c) for c in casos))
     revisar("urgente es booleano", all(isinstance(c["urgente"], bool) for c in casos))
+
+    print("\n[11] Nivel 2 — porcentaje afectado")
+    from nivel2 import extraer_pct
+
+    for frase, esperado in [
+        ("Ya agarró como tres cuartas partes.", 75),
+        ("como el 75%", 75),
+        ("Como el treinta por ciento", 30),
+        ("setenta y cinco por ciento", 75),
+        ("la mitad de la parcela", 50),
+        ("una de cada cuatro matas", 25),
+        ("una quinta parte", 20),
+        ("Están todas las plantas así.", 10),
+    ]:
+        valor = extraer_pct(frase)
+        revisar(f"pct «{frase[:32]}» = {esperado}", valor == esperado, f"-> {valor}")
+
+    print("\n[12] Nivel 2 — prioridad y semáforo")
+    from nivel2 import calcular_prioridad, calcular_semaforo
+
+    plaga_cogollero = next(p for p in clf.plagas if p["id"] == "gusano_cogollero")
+    parcela_ejemplo = {"id": "P-X", "cultivo": "maíz", "etapa": "V8", "superficie_ha": 4.5}
+    prioridad = calcular_prioridad(plaga_cogollero, parcela_ejemplo, 50)
+    revisar("ejemplo del reglamento = 79", prioridad == 79, f"-> {prioridad}")
+    revisar("79 es naranja", calcular_semaforo(prioridad) == "naranja")
+
+    plaga_hlb = next(p for p in clf.plagas if p["id"] == "hlb")
+    parcela_limon = {"id": "P-014", "cultivo": "limón", "etapa": "brotación", "superficie_ha": 1.0}
+    revisar("cuarentenaria = 100 rojo",
+            calcular_prioridad(plaga_hlb, parcela_limon, 5) == 100
+            and calcular_semaforo(100) == "rojo")
+
+    print("\n[13] Nivel 2 — asignación de técnico")
+    from nivel2 import elegir_tecnico
+
+    tecnicos = [
+        {"id": "T-09", "especialidad": "entomologia", "lat": 19.50, "lon": -98.88, "carga": 4},
+        {"id": "T-02", "especialidad": "entomologia", "lat": 19.52, "lon": -98.90, "carga": 1},
+        {"id": "T-05", "especialidad": "fitopatologia", "lat": 19.50, "lon": -98.88, "carga": 0},
+        {"id": "T-01", "especialidad": "entomologia", "lat": 19.50, "lon": -98.88, "carga": 5},
+    ]
+    parcela = {"lat": 19.50, "lon": -98.88}
+    revisar("elige al más cercano con carga < 5",
+            elegir_tecnico(tecnicos, plaga_cogollero, parcela) == "T-09")
+    revisar("excluye especialidad distinta",
+            "T-05" not in {elegir_tecnico(tecnicos, plaga_cogollero, parcela)})
+    revisar("excluye carga 5 o más",
+            elegir_tecnico(tecnicos, plaga_cogollero, parcela) != "T-01")
+    sin_disponibles = [dict(t, carga=7) for t in tecnicos]
+    revisar("sin candidatos -> None",
+            elegir_tecnico(sin_disponibles, plaga_cogollero, parcela) is None)
+    empate = [
+        {"id": "T-08", "especialidad": "entomologia", "lat": 19.50, "lon": -98.88, "carga": 2},
+        {"id": "T-03", "especialidad": "entomologia", "lat": 19.50, "lon": -98.88, "carga": 2},
+    ]
+    revisar("empate de distancia -> menor id", elegir_tecnico(empate, plaga_cogollero, parcela) == "T-03")
+
+    print("\n[14] Campos enviados a la API")
+    from clasificador import caso_para_api
+
+    caso_interno = {"reporte_id": "R-X", "es_plaga": True, "plaga": "pulgon",
+                    "semaforo": "amarillo", "tecnico_id": "T-01", "prioridad": 50,
+                    "urgente": False, "_pct": 30, "_nivel2": "detalle"}
+    limpio = caso_para_api(caso_interno)
+    revisar("descarta claves internas", "_pct" not in limpio and "_nivel2" not in limpio)
+    revisar("conserva los campos calificables",
+            {"reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id", "prioridad"} <= set(limpio))
 
     print("\n[10] Robustez ante catálogo cambiado por los organizadores")
     clf_nuevo = crear_clasificador()

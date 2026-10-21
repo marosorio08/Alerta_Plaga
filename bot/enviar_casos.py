@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente, ApiError  # noqa: E402
-from clasificador import Clasificador, resultados_a_casos  # noqa: E402
+from clasificador import Clasificador, caso_para_api, resultados_a_casos  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -51,7 +51,7 @@ def main() -> None:
     ok, falla = 0, 0
     for c in casos:
         try:
-            api.validar_caso(c)
+            api.validar_caso(caso_para_api(c))
             ok += 1
         except ApiError as e:
             falla += 1
@@ -63,12 +63,16 @@ def main() -> None:
     n_noplaga = sum(1 for c in casos if not c["es_plaga"])
     n_des = sum(1 for c in casos if c["es_plaga"] and c.get("plaga") == "desconocida")
     n_urg = sum(1 for c in casos if c.get("urgente"))
-    print(f"  plaga identificada={n_plaga - n_des} | desconocida={n_des} | no_plaga={n_noplaga} | urgentes={n_urg}")
+    con_sem = sum(1 for c in casos if c.get("semaforo"))
+    con_tec = sum(1 for c in casos if c.get("tecnico_id"))
+    print(f"  plaga identificada={n_plaga - n_des} | desconocida={n_des} | no_plaga={n_noplaga}")
+    print(f"  con semáforo={con_sem} | con técnico={con_tec} | rojo/naranja={n_urg}")
 
     if not args.enviar:
         print("\n[DRY-RUN] No se registró nada. Agrega --enviar para registrar.")
         for c in casos:
-            print(f"  {c['reporte_id']} es_plaga={c['es_plaga']} plaga={c['plaga']} urgente={c.get('urgente')}")
+            print(f"  {c['reporte_id']} es_plaga={c['es_plaga']} plaga={c['plaga']} "
+                  f"sem={c.get('semaforo')} tec={c.get('tecnico_id')} pri={c.get('prioridad')}")
         return
 
     # 3) confirmación
@@ -82,7 +86,7 @@ def main() -> None:
     enviados, errores = 0, 0
     for c in casos:
         try:
-            r = api.registrar_caso(c)
+            r = api.registrar_caso(caso_para_api(c))
             print(f"  OK {c['reporte_id']} -> {json.dumps(r, ensure_ascii=False)[:160]}")
             enviados += 1
         except ApiError as e:

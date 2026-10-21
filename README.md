@@ -27,22 +27,33 @@ python bot/analisis_reportes.py                 # tabla reporte -> cultivo
 python bot/clasificador.py                      # clasificación completa (sin IA aún)
 ```
 
-## Regla de urgencia (código puro, sin IA)
+## Regla de urgencia
 
-```python
-PLAGAS_URGENTES = {"gusano_cogollero", "roya_frijol", "tizon_tardio",
-                   "chapulin", "hlb", "gorgojo_khapra"}
-urgente = es_plaga and (plaga in PLAGAS_URGENTES)
-```
+El Nivel 1 usaba una lista fija; el Nivel 2 ya no califica `urgente`. Ahora la urgencia
+se **deriva del catálogo** (`severidad` alta/crítica o `cuarentenaria`), de modo que si
+los organizadores agregan plagas el sistema se adapta sin tocar código.
 
 ## Estado (20-oct-2026, noche)
 
 - Repo registrado con `PATCH /equipo` ✔
-- Catálogos y 55 reportes descargados y en caché ✔
-- Clasificador determinista: 20 reportes de texto resueltos (14 plaga + 6 no-plaga);
-  34 voz/foto requieren transcripción/visión → plaga `desconocida`
-- **Pendiente:** renovar OpenRouter API key (está expirada) para voz/fotos;
-  `motor_audio_foto.py`, despliegue `app_web/`, telegram notificador
+- Catálogos y reportes en caché ✔ (se refrescan solos cada 10 min)
+- Motor completo: texto, voz (consenso de 2 modelos) y fotos (consenso de 3)
+- Listener continuo que clasifica y valida sin registrar (`--enviar` es explícito)
+- **0 casos registrados** en `POST /casos` a propósito, hasta validar todo
+
+## Nivel 2 (prioridad · semáforo · técnico)
+
+Desde el martes por la noche el reto pide, además de la plaga, un **semáforo** y un
+**técnico asignado**. Todo se calcula con reglas deterministas en `bot/nivel2.py`
+y se valida contra los 40 casos previos: **40/40 en prioridad, semáforo y técnico**.
+
+```bash
+python bot/validar_nivel2.py   # fórmulas contra casos con respuesta correcta
+python bot/probar_motor.py     # 49 pruebas sin gastar API
+python bot/extras.py           # brotes, plazos y cuarentenarias (modo seco)
+```
+
+Diseño y justificación: [`docs/NIVEL2.md`](docs/NIVEL2.md).
 
 ## Integrantes
 
