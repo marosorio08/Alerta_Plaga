@@ -45,13 +45,26 @@
     return fmtFecha.format(d).replace('.', '');
   };
 
+  function actualizarSaludo() {
+    if (!el.saludo) return;
+    const hora = Number(new Intl.DateTimeFormat('en-US', {
+      hour: '2-digit',
+      hourCycle: 'h23',
+      timeZone: 'America/Mexico_City',
+    }).format(new Date()));
+    let texto = '🌙 Hola, buenas noches';
+    if (hora >= 6 && hora < 12) texto = '🌅 Hola, buenos días';
+    else if (hora >= 12 && hora < 19) texto = '☀️ Hola, buenas tardes';
+    el.saludo.textContent = texto;
+  }
+
   const REFRESH_MS = 30000;
 
   const ESTADOS = {
-    urgente: { label: 'Urgente', color: '#c22f2f', badge: 'badge-urgente', prioridad: 0 },
-    plaga: { label: 'Con plaga', color: '#d99412', badge: 'badge-plaga', prioridad: 1 },
-    sin_plaga: { label: 'Sin plaga', color: '#2f9e5f', badge: 'badge-sin_plaga', prioridad: 2 },
-    sin_clasificar: { label: 'Sin clasificar', color: '#9aa8a0', badge: 'badge-sin_clasificar', prioridad: 3 },
+    urgente: { label: 'Urgente', color: '#ff6b6b', badge: 'badge-urgente', prioridad: 0 },
+    plaga: { label: 'Con plaga', color: '#ffb84d', badge: 'badge-plaga', prioridad: 1 },
+    sin_plaga: { label: 'Sin plaga', color: '#2dd4a7', badge: 'badge-sin_plaga', prioridad: 2 },
+    sin_clasificar: { label: 'Sin clasificar', color: '#8fa99a', badge: 'badge-sin_clasificar', prioridad: 3 },
   };
 
   const TIPO_LABEL = { texto: 'Texto', voz: 'Voz', foto: 'Foto' };
@@ -83,6 +96,7 @@
   const el = {
     live: $('#live-indicator'),
     liveText: $('#live-text'),
+    saludo: $('#saludo'),
     refreshBtn: $('#refresh-btn'),
     banner: $('#banner'),
     bannerText: $('#banner-text'),
@@ -271,9 +285,19 @@
     }
     const map = window.L.map(cont, { scrollWheelZoom: true, preferCanvas: true, zoomSnap: 0.5 });
     map.setView([19.48, -98.86], 11);
-    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+    const atribucion = 'Tiles &copy; <a href="https://www.esri.com/" target="_blank" rel="noopener">Esri</a> &mdash; Esri, DeLorme, NAVTEQ';
+    map.createPane('etiquetas');
+    map.getPane('etiquetas').style.zIndex = 350;
+    window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      maxNativeZoom: 16,
+      attribution: atribucion,
+    }).addTo(map);
+    window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      maxNativeZoom: 16,
+      pane: 'etiquetas',
+      attribution: atribucion,
     }).addTo(map);
 
     for (const estado of Object.keys(ESTADOS)) {
@@ -880,6 +904,8 @@
     }, REFRESH_MS);
     setInterval(actualizarReloj, 1000);
     actualizarReloj();
+    actualizarSaludo();
+    setInterval(actualizarSaludo, 60000);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
