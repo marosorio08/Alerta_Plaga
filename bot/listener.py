@@ -74,7 +74,7 @@ def guardar_json(archivo: Path, datos) -> None:
 class Listener:
     def __init__(self, intervalo: int = 20, refresco_min: int = 10, enviar: bool = False,
                  extras: bool = False, preguntas: bool = False, avisos_reales: bool = False,
-                 telegram: bool = False) -> None:
+                 telegram: bool = False, vigilante: bool = False) -> None:
         self.api = ApiCliente()
         self.clf = Clasificador(self.api, con_ia=True)
         self.intervalo = intervalo
@@ -82,6 +82,7 @@ class Listener:
         self.enviar = enviar
         self.preguntas = preguntas
         self.telegram = telegram
+        self.vigilante = vigilante
         self.repo = RepositorioSupabase()
         self.extras = Extras(self.api, seco=not avisos_reales, repo=self.repo) if extras else None
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
@@ -406,6 +407,20 @@ class Listener:
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
 
+    def _arrancar_vigilante(self) -> None:
+        """Avisa al coordinador por Telegram cuando hay reportes por verificar."""
+        try:
+            import threading
+
+            from vigilante import Vigilante
+
+            v = Vigilante(api=self.api, telegram=True)
+            hilo = threading.Thread(target=v.correr, daemon=True, name="vigilante")
+            hilo.start()
+            print(f"[{ahora()}] vigilante de puntos activo (hilo {hilo.name})")
+        except Exception as exc:
+            print(f"[{ahora()}] no se pudo arrancar el vigilante: {exc}")
+
     def _arrancar_bot_telegram(self) -> None:
         """Levanta el agente del bot de Telegram en un hilo en segundo plano."""
         try:
@@ -497,9 +512,13 @@ class Listener:
               f"registro automático: {'SÍ' if self.enviar else 'NO'}")
         if self.telegram:
             self._arrancar_bot_telegram()
+
         # Refresca catálogos, casos previos y visitas ANTES del primer ciclo.
         # También sincroniza Supabase para que existan las claves foráneas.
         self.refrescar_catalogo()
+        if self.vigilante:
+            self._arrancar_vigilante()
+
         while True:
             inicio = time.time()
             try:
@@ -538,6 +557,8 @@ def main() -> None:
     parser.add_argument("--avisos-reales", action="store_true", help="Enviar avisos a la API (si no, modo seco)")
     parser.add_argument("--preguntas", action="store_true", help="Hacer preguntas a los productores")
     parser.add_argument("--telegram", action="store_true", help="Activar el agente del bot de Telegram")
+    parser.add_argument("--vigilante", action="store_true",
+                        help="Avisa por Telegram reportes por verificar / dudosos (no registra nada)")
     parser.add_argument("--reiniciar", action="store_true", help="Ignorar el estado y reprocesar todo")
     args = parser.parse_args()
 
@@ -548,7 +569,8 @@ def main() -> None:
 
     listener = Listener(intervalo=args.intervalo, refresco_min=args.refresco, enviar=args.enviar,
                         extras=args.extras, preguntas=args.preguntas,
-                        avisos_reales=args.avisos_reales, telegram=args.telegram)
+                        avisos_reales=args.avisos_reales, telegram=args.telegram,
+                        vigilante=args.vigilante)
     listener.correr(una_vez=args.una_vez)
 
 
