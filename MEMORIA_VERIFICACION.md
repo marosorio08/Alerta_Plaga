@@ -1,0 +1,166 @@
+# 🧠 MEMORIA DE VERIFICACIÓN — Equipo 7_7 (Actualización 21-oct 09:16)
+
+> **Propósito de este archivo:** memoria del historial y **guía operativa** para verificar
+> los casos dudosos. El próximo agente/sesión debe leerlo ANTES de tocar cualquier cosa
+> relacionada con brotes, dudosos o el vigilante. Complementa a `REPORTE_FINAL.md`
+> (estado del hackathon) y `docs/NIVEL2.md` (reglas del nivel 2).
+
+---
+
+## 1. Ficha rápida
+
+| Campo | Valor |
+|---|---|
+| Reto | «Alerta Plaga» — junta de sanidad vegetal de Texcoco (IT Green × DIMA UACh) |
+| Equipo | `equipo02` · **7_7** · Rafael (Rol A) · Emmanuel (Rol B) |
+| API | `https://itg.tailf75570.ts.net` · Token `EQUIPO_TOKEN` en `.env` |
+| Servidor | `equipo02@179-236-73-82.sslip.io` (SSH puerto 2202) — agente bajo supervisor |
+| Dashboard | https://equipo02.179-236-73-82.sslip.io |
+| Tabla oficial | `GET https://itg.tailf75570.ts.net/tabla.json` |
+| Cierre API | jue 22-oct 23:59 · Defensa viernes 23 |
+
+### Posición en vivo (corte 09:16)
+| # | Equipo | Pts/máx | % | Enviados | Brote | Preguntas | Avisos |
+|---|---|---|---|---|---|---|---|
+| 1 | MISA | 295/314 | 93.9 | 79 | 100 | 4 | 138 |
+| **2** | **7_7** | **292/314** | **93.0** | **79/79** | 93 | **10** | 131 |
+| 3 | string | 277/314 | 88.2 | 79 | 86 | 7 | 49 |
+| 4 | xD | 241/314 | 76.8 | 79 | null | 0 | 5 |
+
+**Resumen:** 2.º lugar, **3 pts** de diferencia con MISA. **79/79 publicados → 79/79 enviados (al día).**
+Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 96 · tecnico 100 · **brote 93**.
+
+---
+
+## 2. Los 4 bugs corregidos (lecciones → código)
+
+| # | Fallo real | Causa raíz | Fix (commit) |
+|---|---|---|---|
+| 1 | R-2043 brote ❌ | **Falso positivo**: el mismo productor (PR-191) reportó 3 veces en horas (R-2032/35/43) y sus propios casos disparaban brote | **Dedupe por productor** (`43e5495`): los casos propios del mismo productor cuentan una vez por brote; los previos NUNCA se deduplican |
+| 2 | R-2056 es_plaga ❌ | **La IA sola** dijo "no plaga" en un texto de roya; las reglas acertaban | **Consenso Híbrido** (`d1a2202`): reglas+IA; si difieren → histórico; sin histórico → **mandan las REGLAS** |
+| 3 | R-2070/R-2073 brote ❌ | **Falso negativo (bug de orden)**: el listener calculaba brote con `resultados_a_casos([reporte])` — UN SOLO reporte — y `_recalcular_brotes` corría DESPUÉS del registro | **3 fases** (`8e486d5`): 1-clasificar todos → 2-recalcular brotes con el **conjunto COMPLETO** (previos + todos los casos propios) → 3-validar y registrar. **El brote NUNCA se decide con un solo reporte.** |
+| 4 | R-2071 sem/tec/brote +0 | Caso registrado solo con es_plaga+plaga; la API decía "todavía le pueden agregar: brote, semaforo, tecnico_id" | **Complemento** (`0744595`): reenviar POST /casos con los campos faltantes SUMA los puntos (+3 en R-2071 → 5/5) |
+
+**Validación:** `probar_motor.py` 77/77 · `validar_brote.py` 40/40 + casos reales R-2043/R-2070 · `validar_nivel2.py` 40/40/40.
+
+---
+
+## 3. CÓMO VERIFICAR UN CASO DUDOSO (protocolo paso a paso)
+
+> Este es el flujo que debemos seguir SIEMPRE que el vigilante avise de un dudoso.
+> **NUNCA registrar a ciegas**: primero verificar, luego (si da puntos y es seguro) registrar.
+
+### Paso 0 — Dónde está la cola de dudosos
+- En el servidor: `~/agente/cache/revision_pendiente.json`
+- Bajarlo a local con las herramientas de sesión (SFTP por SSH) y leerlo.
+- El **vigilante** (`bot/vigilante.py`) avisa por Telegram (Rafa **y** Emmanuel) cada ~90 s cuando hay novedades. NUNCA registra nada solo.
+
+### Paso 1 — Identificar el reporte y su motivo
+Leer del pendiente: `reporte_id`, `motivo` (plaga desconocida / confianza baja / brote con confianza media), `recibido`, `texto` y el `caso` propuesto.
+
+### Paso 2 — Re-clasificar con datos frescos
+```
+python bot/descargar_catalogos.py --reportes     # actualiza cache/ con los reportes al día
+```
+- Si es texto: revisar la señal determinista (ej. "chahuixtle" en frijol → roya_frijol).
+- Si es voz/foto: usar la bitácora del servidor (`listener_bitacora_servidor.jsonl`) que ya tiene la plaga resuelta por IA (consenso STT/visión).
+- Cruzar con la parcela/cultivo real del reporte.
+
+### Paso 3 — Calcular el Nivel 2 (solo si hay plaga conocida)
+```
+prioridad = severidad + superficie(pct) + etapa   # 0..100
+semaforo  = rojo≥85 · naranja≥70 · amarillo≥40 · verde<40
+tecnico   = especialidad + carga<5 en MOMENTO=<recibido> + más cercano (haversine R=6371)
+```
+- **El pct**: mirar la sensibilidad (un semáforo que no cambia ante 10-75 % es "blindado").
+
+### Paso 4 — Calcular el BROTE con el CONJUNTO COMPLETO ⚠️
+- **NUNCA** con un solo reporte (regresión R-2070).
+- Contar: previos + todos los casos propios, misma plaga, **<5 km**, ventana **168 h**, con dedupe por productor.
+- Si el resultado difiere del que tenía el pendiente, anotarlo.
+
+### Paso 5 — Consultar el estado real en la API (probe SEGURO)
+- `POST /casos` con el payload → si responde **409**, ya está registrado y devuelve `puntos` + `detalle` por campo (acertar/fallar). **No puntúa dos veces.**
+- Si responde **201** → se registró en ese momento (usar solo cuando ya decidimos enviar).
+
+### Paso 6 — Decisión
+| Resultado | Acción |
+|---|---|
+| Ya está registrado y completo (5/5 o 2/2 seguimiento) | ✅ Nada que hacer; avisar "resuelto" |
+| Ya registrado con "todavía le pueden agregar: ..." | 💰 **Complemento** → enviar los campos calculados (potencial +3) |
+| No registrado y campos con confianza alta | ✅ Enviar el payload completo |
+| No registrado, plaga desconocida o brote ambiguo | ⚠️ Avanzarlo con Rafa/Emmanuel, no enviar a ciegas |
+
+### Paso 7 — Limpiar la cola
+El vigilante marca como `ok` los dudosos que ya se registraron (no los vuelve a avisar).
+
+---
+
+## 4. Casos dudosos resueltos (ejemplos de referencia)
+
+| Reporte | Motivo | Verificación | Resultado |
+|---|---|---|---|
+| **R-2071** (mosquita blanca) | sin semaforo/tecnico/brote al registrar | respuesta del productor aportó parcela P-092 + "la mitad" (50 %). Semaforo amarillo (invariante al pct 10-75), técnico T-03 (carga 2, entomología, más cercano), brote false (1 caso <5 km) | **Complemento +3 → 5/5** ✅ |
+| **R-2075** (seguimiento tizón) | plaga desconocida en cola | es seguimiento → la API solo califica es_plaga+plaga (máx 2); el probe registró 2/2 | **2/2** ✅ (seguimiento) |
+| **R-2079** (roya del frijol) | "brote con confianza media" | "chahuixtle" en frijol → roya; **6 casos de roya <5 km en 168 h** → brote TRUE; semaforo amarillo, técnico T-09 | **5/5 automático** ✅ (el fix del conjunto completo lo salvó) |
+| R-2043, R-2070, R-2073 | errores históricos de brote | ver sección 2 | irrecuperables, no repetir |
+
+**Las respuestas `-R` (sufijo) NO son reportes**: la API responde 404 "Mensaje no encontrado". Ignorarlas (no dan puntos ni restan).
+
+---
+
+## 5. Infraestructura actual (qué corre en el servidor)
+
+- **Agente** (`supervisorctl status agente`): `.venv/bin/python -u bot/listener.py --intervalo 20 --extras --avisos-reales --preguntas --telegram --enviar --vigilante`
+  - Registra reportes nuevos automáticamente (en 3 fases, brote con conjunto completo).
+  - Aparca dudosos en `~/agente/cache/revision_pendiente.json`.
+  - Avisa por Telegram al coordinador (Rafa `1472274235`) **y a Emmanuel (`1483221634`)** vía `TELEGRAM_CHATS_EXTRA`.
+- **Vigilante** (`bot/vigilante.py`): corre como hilo, cada 90 s revisa la API y avisa si hay (1) publicados sin registrar, (2) agregables que suman +3, (3) dudosos. **Nunca registra.** Anti-spam: huella de mensaje + revisita mínima 30 min.
+- **Dashboard** (puerto 3000): proxy autenticado + fallback a cache compartida `~/app/cache/casos_propuestos.json`.
+- **Auto-despliegue**: los pushes a `main` se despliegan solos; el comando de arranque vive en `~/despliegue.conf` (se regenera con `python bot/desplegar_agente.py`).
+
+### Telegram: ¿los botones dan puntos?
+**NO.** Los botones (✅ Aprobar / 🔁 Cambiar técnico / 🚫 Falsa alarma) solo mandan `POST /avisos`
+(columnas "avisos"/retos extra). Los puntos reales solo los da `POST /casos` con los campos
+correctos. Decidir "subir" un caso dudoso = enviar el payload de `/casos`, no el botón.
+
+---
+
+## 6. Comandos útiles
+
+```powershell
+# Validar el motor (sin gastar API)
+python bot/probar_motor.py                 # 77 pruebas
+python bot/validar_brote.py                # 40/40 + casos reales R-2043/R-2070
+python bot/validar_nivel2.py               # 40/40/40 prioridad/semáforo/técnico
+
+# Datos frescos
+python bot/descargar_catalogos.py --reportes
+
+# Una pasada del listener (no registra)
+python bot/listener.py --una-vez
+
+# Vigilante (loop o una pasada)
+python bot/vigilante.py --una-vez --sin-telegram
+python bot/vigilante.py                    # loop (avisa por Telegram)
+
+# Complemento/registro puntual (la API responde 409 con detalle o 201)
+python bot/enviar_casos.py --solo R-XXXX   # dry-run
+python bot/enviar_casos.py --solo R-XXXX --enviar
+
+# Despliegue del agente (regenera despliegue.conf y reinicia)
+python bot/desplegar_agente.py
+
+# Estado en el servidor
+python bot/estado_despliegue.py
+```
+
+---
+
+## 7. Notas para el próximo agente
+
+1. **Todo OK al corte 09:16** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA.
+2. El flujo de verificación de la sección 3 es el que se usó para resolver R-2071/R-2075/R-2079 sin fallar.
+3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, dedupe por productor). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
+4. **Complemento**: si la API devuelve "todavía le pueden agregar: brote, semaforo, tecnico_id", esos son puntos recuperables (+3) si calculamos bien los campos con los datos que aporta el productor (respuestas `-R` dan parcela/pct).
+5. El repo: `marosorio08/Alerta_Plaga_Gusano` (privado). PRs 1-5 fusionados. La rama de Emmanuel (Caso_Emmanuel) quedó 33 commits atrás de main: necesita `git pull origin main` antes de cualquier PR nuevo (ya avisado por Telegram).
