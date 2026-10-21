@@ -73,7 +73,7 @@
 |---|---|---|
 | `semaforo` | `nivel2.calcular_prioridad` | `severidad + superficie(pct) + etapa`; cuarentenaria=100; umbrales rojo≥85, naranja≥70, amarillo≥40, verde<40 |
 | `tecnico_id` | `nivel2.elegir_tecnico` | Especialidad + carga<5 en `momento=<recibido>` + más cercano por haversine (R=6371); empates por carga e id |
-| `brote` | `nivel2.contar_casos_cercanos` | 3+ casos (contando este) de la misma plaga a **<5 km** en las últimas **168 h**; cuentan previos + casos propios |
+| `brote` | `nivel2.contar_casos_cercanos` | 3+ casos (contando este) de la misma plaga a **<5 km** en las últimas **168 h**; cuentan previos + casos propios. **Refinamiento anti-falso-brote:** los casos propios de un MISMO productor (sus mensajes de seguimiento del mismo problema) cuentan una sola vez por productor — evita brotes falsos (caso real R-2043). Los `/casos-previos` jamás se deduplican |
 
 Validación contra la respuesta oficial: **Prioridad 40/40 · Semáforo 40/40 ·
 Técnico 40/40 · Brote 40/40** (`bot/validar_nivel2.py`, `bot/validar_brote.py`).

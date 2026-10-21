@@ -262,19 +262,27 @@ def _a_datetime(valor) -> datetime | None:
 
 def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict],
                           radio_km: float = RADIO_BROTE_KM,
-                          ventana_horas: float = VENTANA_BROTE_HORAS) -> int:
+                          ventana_horas: float = VENTANA_BROTE_HORAS,
+                          dedupe_productor_propios: bool = False) -> int:
     """Cuenta los casos de la misma plaga a menos de `radio_km` que llegaron
     entre `recibido - ventana_horas` y `recibido` (inclusive).
 
     `referencias` es una lista de dicts con ``plaga``, ``lat``, ``lon`` y
     ``recibido``. Si el propio caso está en la lista (distancia 0, misma
     hora), se cuenta a sí mismo, tal como pide el reglamento.
+
+    `dedupe_productor_propios=True`: los CASOS PROPIOS (los que registró
+    nuestro sistema, marcados con ``propio=True`` y ``prod``) cuentan UNA vez
+    por productor. Evita que los mensajes de un mismo productor con el mismo
+    problema (sus "seguimientos") inflen el conteo y disparen brotes falsos
+    (caso real R-2043). Los /casos-previos (propio=False) NUNCA se deduplican.
     """
     t_ref = _a_datetime(recibido)
     if t_ref is None or lat is None or lon is None:
         return 0
     limite = t_ref - timedelta(hours=ventana_horas)
     total = 0
+    productores_vistos: set = set()
     for ref in referencias:
         if ref.get("plaga") != plaga:
             continue
@@ -291,6 +299,13 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
         if t_otro is None:
             continue
         if limite <= t_otro <= t_ref:
+            if dedupe_productor_propios and ref.get("propio"):
+                prod = ref.get("prod")
+                if prod is not None:
+                    if prod in productores_vistos:
+                        continue  # mismo productor ya contado en este brote
+                    productores_vistos.add(prod)
+                # prod None (sin dato): no se puede deduplicar, se cuenta
             total += 1
     return total
 

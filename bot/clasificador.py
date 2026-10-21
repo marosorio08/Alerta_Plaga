@@ -586,6 +586,12 @@ class Clasificador:
         No cuentan los seguimientos, los mensajes que no son reportes ni los
         que quedaron como "desconocida". La hora es la `recibido` del mensaje.
 
+        Refinamiento anti-falso-brote: los casos PROPIOS de un mismo productor
+        (posibles mensajes de seguimiento del mismo problema) cuentan UNA vez
+        por productor dentro del brote (caso real R-2043: un productor reportó
+        3 veces en pocas horas y nuestros 3 casos propios disparaban un brote
+        que la API rechazó). Los /casos-previos nunca se deduplican.
+
         Si un caso no tiene parcela con coordenadas o plaga aclarada, queda
         fuera del resultado (no se manda el campo, no se califica).
         """
@@ -593,7 +599,7 @@ class Clasificador:
             previos = cargar_previos()
         referencias: list[dict] = [
             {"plaga": p["plaga"], "lat": p["lat"], "lon": p["lon"],
-             "recibido": p.get("recibido")}
+             "recibido": p.get("recibido"), "propio": False}
             for p in previos
             if p.get("plaga") and p.get("plaga") != "desconocida"
             and p.get("lat") is not None and p.get("lon") is not None
@@ -617,14 +623,16 @@ class Clasificador:
             except (KeyError, TypeError, ValueError):
                 continue
             referencia = {"plaga": c["plaga"], "lat": lat, "lon": lon,
-                          "recibido": r.get("recibido")}
+                          "recibido": r.get("recibido"),
+                          "propio": True, "prod": r.get("productor_id")}
             referencias.append(referencia)
             elegibles.append({"rid": c["reporte_id"], **referencia})
 
         resultado: dict[str, bool] = {}
         for e in elegibles:
             n = contar_casos_cercanos(e["plaga"], e["lat"], e["lon"],
-                                      e["recibido"], referencias)
+                                      e["recibido"], referencias,
+                                      dedupe_productor_propios=True)
             resultado[e["rid"]] = n >= MINIMO_CASOS_BROTE
         return resultado
 

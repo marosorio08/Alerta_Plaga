@@ -397,6 +397,33 @@ def main() -> None:
     else:
         print("  (se omite: sin previo pulgon con parcela)")
 
+    print("\n[19] Brote refinado — mismo productor no infla (regresión R-2043)")
+    from nivel2 import contar_casos_cercanos as ccc
+
+    base_b = "2026-10-19T10:00:00-06:00"
+    mismo_productor = [
+        {"plaga": "pulgon", "lat": 19.50, "lon": -98.88, "recibido": "2026-10-18T10:00:00-06:00",
+         "propio": True, "prod": "PR-191"},
+        {"plaga": "pulgon", "lat": 19.501, "lon": -98.88, "recibido": "2026-10-19T09:00:00-06:00",
+         "propio": True, "prod": "PR-191"},
+        {"plaga": "pulgon", "lat": 19.50, "lon": -98.88, "recibido": base_b,
+         "propio": True, "prod": "PR-191"},
+    ]
+    n_flag = ccc("pulgon", 19.50, -98.88, base_b, mismo_productor, dedupe_productor_propios=True)
+    revisar("3 propios del MISMO productor NO forman brote (dedupe)",
+            n_flag < MINIMO_CASOS_BROTE, f"-> n={n_flag}")
+    n_sin = ccc("pulgon", 19.50, -98.88, base_b, mismo_productor, dedupe_productor_propios=False)
+    revisar("sin el refinamiento sí daba 3 (el bug R-2043)",
+            n_sin >= MINIMO_CASOS_BROTE, f"-> n={n_sin}")
+    distintos = [dict(r, prod=f"PR-{i}") for i, r in enumerate(mismo_productor)]
+    n_dis = ccc("pulgon", 19.50, -98.88, base_b, distintos, dedupe_productor_propios=True)
+    revisar("3 propios de productores DISTINTOS sí forman brote",
+            n_dis >= MINIMO_CASOS_BROTE, f"-> n={n_dis}")
+    ref_mixto = [dict(r, propio=False) for r in mismo_productor]
+    n_prev = ccc("pulgon", 19.50, -98.88, base_b, ref_mixto, dedupe_productor_propios=True)
+    revisar("los previos (propio=False) nunca se deduplican",
+            n_prev >= MINIMO_CASOS_BROTE, f"-> n={n_prev}")
+
     print("\n[10] Robustez ante catálogo cambiado por los organizadores")
     clf_nuevo = crear_clasificador()
     clf_nuevo.plagas = clf_nuevo.plagas + [{
