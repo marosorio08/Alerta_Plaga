@@ -67,53 +67,73 @@ SENALES_PLAGA: dict[str, dict[str, float]] = {
         "excremento": 2.5, "aserrin": 2.5, "acerrin": 2.5, "acerin": 2.5,
         "cernin": 2.5, "serrin": 2.5, "como acerrin": 2.5,
         "rayitas": 2, "hojas rotas": 2, "raspadas": 1.5, "agujer": 2, "perforad": 2,
+        "larvas dentro del cogollo": 3, "daño dentro del cogollo": 3,
+        "daño en el cogollo": 3, "hojas perforadas": 2.5, "mordidas": 1.5,
     },
     "roya_frijol": {
         "chahuixtle": 3, "roya": 3, "roy a": 3, "polvillo": 3, "polvito": 2,
         "polvo color oxido": 3, "color oxido": 2.5, "herrumbre": 2.5,
         "granitos cafes": 2.5, "puntitos cafes": 2.5, "se le pega a uno en los dedos": 2.5,
+        "pustulas": 3, "polvo rojizo": 3, "polvo anaranjado": 3,
+        "polvo oxidado": 3, "manchas con polvo": 2.5,
     },
     "tizon_tardio": {
         "tizon": 3, "hielo": 2.5, "quemazon": 2.5, "quemad": 2.5,
         "huele a podrido": 3, "podrido": 2.5, "moho blanco": 2.5,
         "manchas cafes": 2, "manchas cafe": 2, "mancha negra": 2,
         "negra la planta": 2, "se puso negra": 2,
+        "lesiones oscuras": 3, "manchas oscuras": 2.5, "crecimiento blanquecino": 3,
+        "manchas blanquecinas": 3, "blanco abajo de la hoja": 3,
+        "blanco atras de la hoja": 3, "abajo de la hoja": 2,
+        "avanza rapido": 2.5, "se esta quemando": 2.5, "quemos": 2,
     },
     "pulgon": {
         "pulgon": 3, "piojillo": 3, "piojo": 2.5, "piojito": 2.5,
         "animalitos verdes": 2.5, "bichitos": 2, "mielecilla": 2.5,
         "fumagina": 2.5, "hollin": 2.5, "cobojin": 2.5,
         "pegajos": 1.5, "como con miel": 2, "tapizada": 1.5, "tapizadas": 1.5,
+        "hojas enrolladas": 2.5, "hoja enrollada": 2.5, "enrollad": 2,
+        "melaza": 2.5, "insectos agrupados": 2.5, "agrupados en los brotes": 2.5,
     },
     "gallina_ciega": {
         "gallina ciega": 3, "nixticuil": 3, "gusano blanco": 3,
         "gusanos blancos": 3, "gusanos blancos enroscados": 3,
         "larvas blancas": 3, "larva blanca": 3, "enroscados": 2.5,
-        "enroscadas": 2.5,
+        "enroscadas": 2.5, "larvas blancas en el suelo": 3, "en el suelo": 1,
         "raices comidas": 3, "raices estan comidas": 3, "estan comidas": 2.5,
-        "raices mordidas": 3, "sin raiz": 3, "salen sin raiz": 3,
+        "raices mordidas": 3, "raices sin": 2.5, "sin raiz": 3, "salen sin raiz": 3,
         "arrancan facil": 2.5, "se arrancan": 2, "acamadas": 2,
-        "se marchita": 2, "planta se marchita": 2.5,
+        "se marchita": 2, "planta se marchita": 2.5, "daños en raices": 3,
         "marchita aunque hay humedad": 3, "marchita con humedad": 3,
-        "marchitas": 1.5, "marchit": 1.0,
+        "marchitas": 1.5, "marchit": 1.0, "perdida de vigor": 2, "se cae": 1.5,
     },
     "mosquita_blanca": {
         "mosquita blanca": 3, "mosquitas blancas": 3, "mosquilla": 3, "mosquita": 2.5,
         "mosquitas": 2.5, "palomilla blanca": 3,
         "amarillas y pegajosas": 2.5, "hojas pegajosas": 1.5,
+        "vuelan al mover": 2.5, "levantan vuelo": 2.5, "salen volando": 2.5,
+        "ninfas en el enves": 3, "en el enves de las hojas": 3, "enves de la hoja": 2.5,
+        "abajo de las hojas": 2, "palomillas": 2.5,
     },
     "chapulin": {
         "chapulin": 3, "chapulines": 3, "chapulina": 3, "chapulinada": 3,
         "langosta": 2.5, "saltamontes": 3, "brincan": 2,
         "matas peladas": 2.5, "defoliada": 2,
+        "mordeduras irregulares": 2.5, "hojas mordidas": 2, "mordidas": 1.5,
+        "insectos saltadores": 3, "saltan": 2, "brincando": 2,
     },
     "mancha_chocolate": {
         "mancha de chocolate": 3, "chocolate": 2.5, "manchita cafe": 2,
         "manchas cafe rojizo": 2.5, "manchas redondas": 2,
+        "lesiones color chocolate": 3, "mancha color chocolate": 3,
+        "manchas cafes": 2, "lesiones cafes": 2,
     },
     "hlb": {
         "dragon amarillo": 3, "hlb": 3, "enverdecimiento": 3,
         "moteado amarillo": 2.5, "psilido": 2.5, "amarillamiento": 2,
+        "amarillamiento asimetrico": 3, "moteado irregular": 2.5,
+        "frutos deformes": 2.5, "frutos deformados": 2.5, "maduración desigual": 2.5,
+        "maduracion desigual": 2.5,
     },
     "gorgojo_khapra": {
         "gorgojo khapra": 3, "khapra": 3, "peludo del grano": 3,
@@ -131,16 +151,34 @@ PATRONES_SEGUIMIENTO = [
 
 # si el reporte no trae parcela, se infiere el cultivo por cómo habla el productor
 CULTIVO_POR_MENCION = {
-    "maíz": ["milpa", "maicito", "maizal", "maiz", "maíz", "elotes", "olote"],
+    "maíz": ["milpa", "maicito", "maizal", "maiz", "maíz", "elotes", "olote", "sorgo", "gramínea", "graminea"],
     "frijol": ["frijol", "frijolera", "frijolito", "frijolar"],
     "avena": ["avena", "avenita"],
     "haba": ["haba", "habas", "habita"],
     "papa": ["papa", "papita", "papa blanca"],
     "jitomate": ["jitomate", "tomate", "jitomatera", "invernadero"],
-    "limón": ["limón", "limon", "limonero", "cítricos", "citricos"],
+    "limón": ["limón", "limon", "limonero", "cítricos", "citricos", "naranja", "mandarina", "toronja"],
     "grano almacenado": ["grano almacenado", "bodega", "almacén", "almacen", "troje"],
     "trigo": ["trigo"],
-    "calabacita": ["calabacita", "calabaza"],
+    "calabacita": ["calabacita", "calabaza", "pepino"],
+    "chile": ["chile", "chilito"],
+    "lechuga": ["lechuga", "lechuguita"],
+}
+
+# Cultivos hospederos según el diagnóstico del reto (documento oficial).
+# Complementa el cruce parcela→cultivo: si el texto menciona un hospedero de
+# un cultivo compatible, se refuerza esa plaga (señal débil + hospedero).
+HOSPEDEROS_PLAGA: dict[str, set[str]] = {
+    "gusano_cogollero": {"maíz", "sorgo", "arroz", "trigo", "gramíneas"},
+    "pulgon": {"frijol", "haba", "chile", "jitomate", "papa", "lechuga", "alfalfa", "algodón", "cítricos"},
+    "chapulin": {"maíz", "frijol", "alfalfa", "sorgo", "hortalizas", "lechuGA"},
+    "roya_frijol": {"frijol", "frijol común", "frijol comun"},
+    "tizon_tardio": {"papa", "jitomate", "solanáceas", "solanaceas"},
+    "mosquita_blanca": {"jitomate", "chile", "frijol", "calabaza", "pepino", "calabacita", "algodón"},
+    "mancha_chocolate": {"haba"},
+    "hlb": {"limón", "naranja", "mandarina", "toronja", "cítricos", "citricos"},
+    "gallina_ciega": {"maíz", "cereales", "papa", "soya", "hortalizas", "pastos", "avena"},
+    "gorgojo_khapra": {"grano almacenado"},
 }
 
 
@@ -425,6 +463,24 @@ class Clasificador:
                         "motor": "senal_debil+cultivo",
                         "razon": f"«{mejor}» es la única opción en {cultivo_ctx}"}
 
+        # 2c) señal débil + hospedero mencionado en el texto (diagnóstico del reto):
+        #     si la señal apunta a una plaga y el productor menciona un cultivo
+        #     que es hospedero de otra compatible, se refuerza por ese cultivo.
+        if puntajes:
+            menciona_cultivo = self._cultivo_mencionado(t)
+            if menciona_cultivo:
+                compatibles = self.cultivares_compatibles(cultivo_ctx or menciona_cultivo)
+                for plaga_id in sorted(puntajes, key=lambda k: -puntajes[k]):
+                    hosp = (HOSPEDEROS_PLAGA.get(plaga_id) or set())
+                    if menciona_cultivo in hosp and plaga_id in compatibles:
+                        # La señal más la mención de un hospedero refuerzan.
+                        if puntajes[plaga_id] >= 1.0:
+                            return {"es_plaga": True, "plaga": plaga_id,
+                                    "confianza": 0.65,
+                                    "motor": "senal+hospedero",
+                                    "razon": (f"«{mejor}» en hospedero {menciona_cultivo} "
+                                              f"→ {plaga_id}")}
+
         # 3) seguimiento de un caso previo sin nombrar plaga
         if any(p in t for p in PATRONES_SEGUIMIENTO):
             return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.5,
@@ -456,6 +512,10 @@ class Clasificador:
             if any(m in texto_norm for m in menciones):
                 return cultivo
         return None
+
+    def _cultivo_mencionado(self, texto_norm: str) -> str | None:
+        """¿Menciona el productor un cultivo sin que sea la parcela? (p. ej. 'el fríjol')."""
+        return self.inferir_cultivo(texto_norm)
 
     def _resultado_plaga(self, plaga_id: str, cultivo: str | None, motor: str,
                          texto_norm: str, puntaje: float = 0.0) -> dict:
