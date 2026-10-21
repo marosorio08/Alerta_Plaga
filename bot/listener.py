@@ -46,6 +46,11 @@ ESTADO = CACHE / "listener_estado.json"
 # el agente y la web compartan los mismos casos (variable CASOS_SALIDA en .env).
 CASOS_TODOS = Path(os.getenv("CASOS_SALIDA") or (CACHE / "casos_propuestos.json"))
 BITACORA = CACHE / "listener_bitacora.jsonl"    # historial de decisiones
+# Casos que el motor no se atreve a registrar solo: quedan pendientes de
+# revisión conjunta y se avisa al coordinador por Telegram.
+PENDIENTES_REVISION = CACHE / "revision_pendiente.json"
+# Confianza por debajo de la cual un caso se considera dudoso (0..1).
+CONFIANZA_DUDOSA = float(os.getenv("CONFIANZA_DUDOSA", "0.55"))
 
 
 def ahora() -> str:
@@ -146,12 +151,20 @@ class Listener:
             self._guardar()
             return 0
 
+        # FASE 1 — clasificar y guardar TODOS los pendientes (sin registrar).
+        # El brote es una regla GLOBAL (previos + todos los casos propios):
+        # si registráramos aquí con `resultados_a_casos([reporte], ...)` el
+        # caso vería solo sus propios datos y daría brote=False aunque haya
+        # 3 casos cercanos (regresión real R-2070). Por eso se registra al
+        # final, cuando el conjunto completo ya está recalculado.
+        acumulados: list[tuple[dict, dict, dict]] = []  # (reporte, detalle, caso)
         for reporte in pendientes:
             detalle = self.procesar(reporte)
             caso = detalle.get("caso", {k: detalle.get(k) for k in ("reporte_id", "es_plaga", "plaga", "urgente")})
             self.casos[caso["reporte_id"]] = caso
             self.estado["procesados"].append(caso["reporte_id"])
             self.nuevos_total += 1
+            acumulados.append((reporte, detalle, caso))
 
             marca = "URGENTE" if caso.get("urgente") else ("plaga" if caso["es_plaga"] else "no-plaga")
             conf = detalle.get("confianza") or 0
@@ -162,7 +175,23 @@ class Listener:
                   f"{marca:<8} plaga={caso.get('plaga')} conf={round(float(conf), 2)}{nivel2} "
                   f"| {str(detalle.get('texto', ''))[:60]}")
 
-            # validación de formato (no puntúa, no registra)
+        # FASE 2 — recalcular brotes con el conjunto COMPLETO (previos +
+        # todos los casos propios). Corrige en memoria el valor de brote de
+        # todos los casos antes de que nadie se registre.
+        self._recalcular_brotes({r["id"]: r for r in reportes})
+
+        # FASE 3 — validar y registrar (ya con el brote corregido).
+        for reporte, detalle, caso in acumulados:
+            caso = self.casos.get(caso["reporte_id"], caso)  # toma el caso ya recalculado
+
+            # Un caso dudoso NO se registra solo: queda pendiente y se avisa
+            # al coordinador para decidirlo juntos (leccion R-2043/R-2070).
+            motivo = self._es_dudoso(detalle, caso)
+            if motivo:
+                self._parkear_dudoso(reporte, detalle, caso, motivo)
+                continue
+
+            # validacion de formato (no puntua, no registra)
             try:
                 self.api.validar_caso(caso_para_api(caso))
             except ApiError as exc:
@@ -189,9 +218,6 @@ class Listener:
         if self.extras:
             self.revisar_brotes()
 
-        # El brote es una regla global: se recalcula con previos + todos los
-        # casos propios (el orden de llegada no puede sesgar el resultado).
-        self._recalcular_brotes({r["id"]: r for r in reportes})
         self._guardar()
         return len(pendientes)
 
@@ -216,6 +242,56 @@ class Listener:
     def _guardar(self) -> None:
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
+
+    # ---------- casos dudosos (aviso al coordinador) ----------
+
+    def _es_dudoso(self, detalle: dict, caso: dict) -> str | None:
+        """Devuelve el motivo si el caso merece revisión conjunta, o None.
+
+        Regla: un caso es dudoso si el motor no está seguro de la plaga
+        (desconocida), si la confianza baja del umbral o si hay datos que
+        contradicen la decisión (ej. brote marcado pero confianza baja).
+        """
+        if not caso.get("es_plaga"):
+            # "no plaga" bien sustentado no genera duda (mensaje administrativo)
+            conf = detalle.get("confianza") or 0
+            if float(conf) >= CONFIANZA_DUDOSA:
+                return None
+        conf = float(detalle.get("confianza") or 0)
+        if caso.get("plaga") == "desconocida":
+            return "plaga desconocida (el motor no identificó qué plaga es)"
+        if conf < CONFIANZA_DUDOSA:
+            return f"confianza baja ({conf:.2f})"
+        if caso.get("brote") and conf < 0.75:
+            return "brote marcado con confianza media (revisar antes de enviar)"
+        return None
+
+    def _parkear_dudoso(self, reporte: dict, detalle: dict, caso: dict, motivo: str) -> None:
+        """Guarda el caso en pendientes y avisa al coordinador por Telegram."""
+        pendientes = []
+        if PENDIENTES_REVISION.exists():
+            try:
+                pendientes = json.loads(PENDIENTES_REVISION.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                pendientes = []
+        pendientes = [p for p in pendientes if p.get("reporte_id") != caso["reporte_id"]]
+        pendientes.append({
+            "reporte_id": caso["reporte_id"],
+            "recibido": reporte.get("recibido"),
+            "texto": (detalle.get("texto") or "")[:280],
+            "motivo": motivo,
+            "caso": caso_para_api(caso),
+            "procesado": ahora(),
+        })
+        guardar_json(PENDIENTES_REVISION, pendientes)
+        print(f"[{ahora()}] ⚠️ CASO DUDOSO {caso['reporte_id']}: {motivo} -> pendiente de revisión")
+        if self.telegram:
+            try:
+                from telegram_notificador import alerta_dudoso
+
+                alerta_dudoso(caso, motivo, detalle)
+            except Exception as exc:
+                print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
 
     def _arrancar_bot_telegram(self) -> None:
         """Levanta el agente del bot de Telegram en un hilo en segundo plano."""

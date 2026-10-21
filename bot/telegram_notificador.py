@@ -109,6 +109,42 @@ def resumen_diario(casos: list[dict], titulo: str = "Resumen de casos") -> bool:
     )
 
 
+def alerta_dudoso(caso: dict, motivo: str, detalle: dict | None = None) -> bool:
+    """Avisa al coordinador cuando el motor no está seguro de un caso.
+
+    Se usa para los casos que el sistema marca como dudosos (confianza baja,
+    brote en el límite, plaga desconocida o discrepancias) y que conviene
+    revisar juntos antes de registrarlos. Arma un mensaje claro con el folio,
+    el motivo y los datos que tenemos.
+    """
+    rid = caso.get("reporte_id", "?")
+    lineas = [
+        f"⚠️ <b>CASO DUDOSO {rid}</b>",
+        f"<b>Motivo:</b> {motivo}",
+        f"<b>Es plaga:</b> {'sí' if caso.get('es_plaga') else 'no'}",
+        f"<b>Plaga:</b> {caso.get('plaga') or '—'}",
+        f"<b>Semáforo:</b> {caso.get('semaforo') or '—'}  "
+        f"<b>Prioridad:</b> {caso.get('prioridad') or '—'}",
+        f"<b>Técnico:</b> {caso.get('tecnico_id') or '—'}  "
+        f"<b>Brote:</b> {caso.get('brote') or '—'}",
+    ]
+    if detalle:
+        conf = detalle.get("confianza")
+        if conf is not None:
+            lineas.append(f"<b>Confianza:</b> {round(float(conf), 2)}")
+        motor = detalle.get("motor")
+        if motor:
+            lineas.append(f"<b>Motor:</b> {motor}")
+        razon = detalle.get("razon")
+        if razon:
+            lineas.append(f"<b>Razón:</b> {str(razon)[:160]}")
+    botones = [[
+        {"text": "✅ Registrarlo", "callback_data": f"aprobar:{rid}"},
+        {"text": "🚫 Revisar", "callback_data": f"falsa:{rid}"},
+    ]]
+    return enviar("\n".join(lineas), botones)
+
+
 def probar() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     print("Telegram configurado:", "sí" if configurado() else "NO (modo seco)")
