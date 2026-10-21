@@ -67,6 +67,13 @@
     sin_clasificar: { label: 'Sin clasificar', color: '#8fa99a', badge: 'badge-sin_clasificar', prioridad: 3 },
   };
 
+  const SEMAFORO = {
+    rojo: { label: 'Rojo', emoji: '🔴', color: '#ff6b6b', badge: 'badge-semaforo-rojo', orden: 0 },
+    naranja: { label: 'Naranja', emoji: '🟠', color: '#ffb84d', badge: 'badge-semaforo-naranja', orden: 1 },
+    amarillo: { label: 'Amarillo', emoji: '🟡', color: '#e8c547', badge: 'badge-semaforo-amarillo', orden: 2 },
+    verde: { label: 'Verde', emoji: '🟢', color: '#2dd4a7', badge: 'badge-semaforo-verde', orden: 3 },
+  };
+
   const TIPO_LABEL = { texto: 'Texto', voz: 'Voz', foto: 'Foto' };
   const TIPO_ICON = {
     texto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
@@ -81,13 +88,15 @@
     resumen: null,
     parcelas: [],
     reportes: [],
+    tecnicos: [],
     cargando: false,
     ultimaActualizacion: null,
     error: null,
     modoRespaldo: false,
-    filtros: { tipo: '', urgencia: '', cultivo: '', q: '' },
+    filtros: { tipo: '', urgencia: '', semaforo: '', brote: '', cultivo: '', q: '' },
     orden: { key: 'recibido', dir: 'desc' },
     capas: new Set(Object.keys(ESTADOS)),
+    tecnicosVisible: true,
   };
 
   // ---------------------------------------------------------------------
@@ -109,13 +118,19 @@
     kpiLugarFoot: $('#kpi-lugar-foot'),
     kpiReportes: $('#kpi-reportes'),
     kpiReportesFoot: $('#kpi-reportes-foot'),
-    kpiUrgentes: $('#kpi-urgentes'),
-    kpiUrgentesFoot: $('#kpi-urgentes-foot'),
+    kpiSemaforo: $('#kpi-semaforo'),
+    kpiSemaforoFoot: $('#kpi-semaforo-foot'),
+    kpiBrotes: $('#kpi-brotes'),
+    kpiBrotesFoot: $('#kpi-brotes-foot'),
+    kpiTecnicos: $('#kpi-tecnicos'),
+    kpiTecnicosFoot: $('#kpi-tecnicos-foot'),
     kpiLatencia: $('#kpi-latencia'),
     kpiLatenciaUnit: $('#kpi-latencia-unit'),
     kpiLatenciaFoot: $('#kpi-latencia-foot'),
     mapSub: $('#map-sub'),
     filtroTipo: $('#filtro-tipo'),    filtroUrgencia: $('#filtro-urgencia'),
+    filtroSemaforo: $('#filtro-semaforo'),
+    filtroBrote: $('#filtro-brote'),
     filtroCultivo: $('#filtro-cultivo'),
     q: $('#q'),
     limpiar: $('#limpiar'),
@@ -125,6 +140,7 @@
     donutSegments: $('#donut-segments'),
     donutTotal: $('#donut-total'),
     estadoList: $('#estado-list'),
+    semaforoList: $('#semaforo-list'),
     topParcelas: $('#top-parcelas'),
     chartPlagas: $('#chart-plagas'),
     chartCultivos: $('#chart-cultivos'),
@@ -165,14 +181,16 @@
     const timeout = setTimeout(() => ctrl.abort(), 20000);
 
     try {
-      const [resumen, parcelas, reportes] = await Promise.all([
+      const [resumen, parcelas, reportes, tecnicos] = await Promise.all([
         fetchJSON('/api/resumen', ctrl.signal),
         fetchJSON('/api/parcelas', ctrl.signal),
         fetchJSON('/api/reportes', ctrl.signal),
+        fetchJSON('/api/tecnicos', ctrl.signal).catch(() => ({ tecnicos: [] })),
       ]);
       state.resumen = resumen;
       state.parcelas = parcelas.parcelas || [];
       state.reportes = reportes.reportes || [];
+      state.tecnicos = tecnicos.tecnicos || [];
       state.ultimaActualizacion = new Date();
       state.error = null;
       state.modoRespaldo = Object.values(resumen.fuentes || {}).some((v) => v === 'cache' || v === 'memoria');
@@ -194,7 +212,7 @@
       setLive('error');
       if (!silencioso || !state.resumen) mostrarBanner(`No se pudieron actualizar los datos: ${mensaje}`);
       if (!state.resumen) {
-        el.tbody.innerHTML = `<tr><td colspan="6" class="empty">No hay datos disponibles. ${esc(mensaje)}</td></tr>`;
+        el.tbody.innerHTML = `<tr><td colspan="9" class="empty">No hay datos disponibles. ${esc(mensaje)}</td></tr>`;
       }
     } finally {
       clearTimeout(timeout);
@@ -259,9 +277,28 @@
     el.kpiReportes.textContent = nf.format(totales.reportes ?? 0);
     el.kpiReportesFoot.textContent = `${nf.format(casos.clasificados ?? 0)} clasificados · ${nf.format(casos.sin_clasificar ?? 0)} pendientes`;
 
-    el.kpiUrgentes.textContent = nf.format(casos.urgentes ?? 0);
-    const pctUrg = casos.es_plaga ? Math.round((casos.urgentes / casos.es_plaga) * 100) : 0;
-    el.kpiUrgentesFoot.textContent = `${pctUrg}% de ${nf.format(casos.es_plaga ?? 0)} casos con plaga`;
+    const sem = casos.semaforo || {};
+    const tech = r.tecnicos || {};
+    const urgentes = casos.urgentes ?? ((sem.rojo || 0) + (sem.naranja || 0));
+    el.kpiSemaforo.textContent = nf.format(urgentes);
+    const desglose = [
+      `🔴 ${nf.format(sem.rojo || 0)}`,
+      `🟠 ${nf.format(sem.naranja || 0)}`,
+      `🟡 ${nf.format(sem.amarillo || 0)}`,
+      `🟢 ${nf.format(sem.verde || 0)}`,
+    ];
+    if (sem.sin_dato) desglose.push(`⚪ ${nf.format(sem.sin_dato)} sin dato`);
+    el.kpiSemaforoFoot.textContent = desglose.join(' · ');
+
+    el.kpiBrotes.textContent = nf.format(casos.brotes ?? 0);
+    const seguimientos = casos.seguimientos ?? 0;
+    el.kpiBrotesFoot.textContent = `${nf.format(casos.con_tecnico ?? 0)} casos con técnico · ${nf.format(seguimientos)} seguimiento${seguimientos === 1 ? '' : 's'}`;
+
+    const cargaMedia = tech.carga_media;
+    el.kpiTecnicos.textContent = nf.format(tech.disponibles ?? 0);
+    el.kpiTecnicosFoot.textContent = `${nf.format(tech.asignados ?? 0)} con casos · ${nf.format(tech.total ?? 0)} en la junta${
+      cargaMedia != null ? ` · carga media ${n1.format(cargaMedia)}` : ''
+    }`;
 
     const lat = eq.latencia_mediana_min;
     el.kpiLatencia.textContent = lat != null ? n1.format(lat) : '—';
@@ -274,7 +311,15 @@
   // ---------------------------------------------------------------------
   // Mapa
   // ---------------------------------------------------------------------
-  const mapCtx = { map: null, capas: {}, markers: new Map(), listo: false };
+  const mapCtx = {
+    map: null,
+    capas: {},
+    tecnicosLayer: null,
+    markers: new Map(),
+    listo: false,
+    firma: null,
+    firmaTecnicos: null,
+  };
 
   function initMapa() {
     const cont = $('#map');
@@ -303,6 +348,7 @@
     for (const estado of Object.keys(ESTADOS)) {
       mapCtx.capas[estado] = window.L.layerGroup().addTo(map);
     }
+    mapCtx.tecnicosLayer = window.L.layerGroup().addTo(map);
 
     map.on('popupopen', (e) => {
       const popupEl = e.popup.getElement();
@@ -332,6 +378,19 @@
     return Math.max(5, Math.min(15, 4.6 + Math.sqrt(area) * 1.9));
   }
 
+  function badgeSemaforo(semaforo, prioridad) {
+    const info = SEMAFORO[semaforo];
+    if (!info) return '<span class="cell-sub">—</span>';
+    const extra = prioridad != null ? ` · ${nf.format(prioridad)}` : '';
+    return `<span class="badge ${info.badge}" title="Prioridad ${prioridad != null ? `${prioridad}/100` : 'sin dato'}"><span class="dot" style="background:${info.color}"></span>${info.label}${extra}</span>`;
+  }
+
+  function badgeBrote(brote) {
+    return brote
+      ? '<span class="badge badge-brote">🦠 Brote</span>'
+      : '<span class="cell-sub">—</span>';
+  }
+
   function popupParcela(p) {
     const estado = ESTADOS[p.estado] || ESTADOS.sin_clasificar;
     const plagas = (p.plagas || []).filter(Boolean);
@@ -342,11 +401,41 @@
       <div class="popup-row"><span>Localidad</span><span>${esc(p.localidad || '—')}, ${esc(p.municipio || '')}</span></div>
       <div class="popup-row"><span>Superficie</span><span>${p.superficie_ha != null ? `${n1.format(p.superficie_ha)} ha` : '—'}</span></div>
       <div class="popup-row"><span>Reportes</span><span>${nf.format(p.reportes || 0)}</span></div>
+      <div class="popup-row"><span>Semáforo</span><span>${p.semaforo ? badgeSemaforo(p.semaforo, p.prioridad) : '—'}</span></div>
+      <div class="popup-row"><span>Técnico</span><span>${esc(p.tecnico_nombre || p.tecnico_id || 'Sin asignar')}</span></div>
       <div class="popup-badges">
         <span class="badge ${estado.badge}"><span class="dot" style="background:${estado.color}"></span>${estado.label}</span>
+        ${p.brote ? badgeBrote(true) : ''}
       </div>
       ${plagas.length ? `<div class="cell-sub">Plaga: ${esc(plagas.join(', '))}</div>` : '<div class="cell-sub">Sin plaga detectada</div>'}
       <button class="popup-action" type="button" data-filtrar-parcela="${esc(p.id)}">Ver casos de esta parcela</button>
+    `;
+  }
+
+  function iconoTecnico(t) {
+    const clase = t.especialidad === 'fitopatologia' ? 'is-fito' : 'is-ento';
+    return window.L.divIcon({
+      className: 'tech-marker',
+      html: `<span class="tech-marker-dot ${clase}" aria-hidden="true">T</span>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+      popupAnchor: [0, -14],
+    });
+  }
+
+  function popupTecnico(t) {
+    const especialidad = t.especialidad === 'fitopatologia' ? 'Fitopatología' : t.especialidad === 'entomologia' ? 'Entomología' : (t.especialidad || 'Sin especialidad');
+    const estado = t.disponible ? 'Disponible' : 'Carga alta';
+    return `
+      <div class="popup-title">👷 ${esc(t.nombre || t.id)} <span class="cell-sub">${esc(t.id)}</span></div>
+      <div class="popup-meta">${esc(especialidad)} · ${esc(estado)}</div>
+      <div class="popup-row"><span>Base</span><span>${esc(t.base || '—')}</span></div>
+      <div class="popup-row"><span>Carga</span><span>${t.carga != null ? `${nf.format(t.carga)}${t.tope != null ? ` / ${nf.format(t.tope)}` : ''}` : '—'}</span></div>
+      <div class="popup-row"><span>Casos asignados</span><span>${nf.format(t.casos || 0)}</span></div>
+      <div class="popup-row"><span>Brotes</span><span>${nf.format(t.brotes || 0)}</span></div>
+      <div class="popup-badges">
+        <span class="badge ${t.disponible ? 'badge-sin_plaga' : 'badge-plaga'}">${t.disponible ? '✅ Disponible' : '⚠️ Carga alta'}</span>
+      </div>
     `;
   }
 
@@ -354,43 +443,78 @@
     if (!mapCtx.listo) return;
 
     const municipios = new Set(state.parcelas.map((p) => p.municipio).filter(Boolean));
-    el.mapSub.textContent = `${nf.format(state.parcelas.length)} parcelas · ${municipios.size} municipios · ${nf.format((state.resumen && state.resumen.totales.productores) || 0)} productores`;
-
-    // Evita repintar si nada cambió (así no se cierran popups abiertos cada 30 s).
-    const firma = state.parcelas.map((p) => `${p.id}:${p.estado}:${p.reportes}`).join('|');
-    if (firma === mapCtx.firma) return;
-    mapCtx.firma = firma;
-
-    const { map, capas } = mapCtx;
-    for (const estado of Object.keys(capas)) capas[estado].clearLayers();
-    mapCtx.markers.clear();
+    el.mapSub.textContent = `${nf.format(state.parcelas.length)} parcelas · ${nf.format(state.tecnicos.length)} técnicos · ${municipios.size} municipios · ${nf.format((state.resumen && state.resumen.totales.productores) || 0)} productores`;
 
     const bounds = window.L.latLngBounds();
     let hay = false;
-
     for (const p of state.parcelas) {
       if (p.lat == null || p.lon == null) continue;
-      const estado = ESTADOS[p.estado] ? p.estado : 'sin_clasificar';
-      const marker = window.L.circleMarker([p.lat, p.lon], {
-        radius: radioParcela(p.superficie_ha),
-        color: '#ffffff',
-        weight: 1.2,
-        opacity: 0.9,
-        fillColor: colorEstado(estado),
-        fillOpacity: estado === 'sin_clasificar' ? 0.5 : 0.82,
-      });
-      marker.bindPopup(popupParcela(p), { maxWidth: 280, closeButton: true });
-      marker.bindTooltip(`${p.nombre} · ${p.cultivo}`, { direction: 'top', offset: [0, -6], opacity: 0.9 });
-      marker.addTo(capas[estado]);
-      mapCtx.markers.set(p.id, marker);
       bounds.extend([p.lat, p.lon]);
       hay = true;
+    }
+    for (const t of state.tecnicos) {
+      if (t.lat == null || t.lon == null) continue;
+      bounds.extend([t.lat, t.lon]);
+    }
+
+    // Evita repintar si nada cambió (así no se cierran popups abiertos cada 30 s).
+    const firmaParcelas = state.parcelas
+      .map((p) => `${p.id}:${p.estado}:${p.reportes}:${p.semaforo}:${p.brote}:${p.tecnico_id}`)
+      .join('|');
+    const { capas } = mapCtx;
+
+    if (firmaParcelas !== mapCtx.firma) {
+      mapCtx.firma = firmaParcelas;
+      for (const estado of Object.keys(capas)) capas[estado].clearLayers();
+      mapCtx.markers.clear();
+
+      for (const p of state.parcelas) {
+        if (p.lat == null || p.lon == null) continue;
+        const estado = ESTADOS[p.estado] ? p.estado : 'sin_clasificar';
+        const marker = window.L.circleMarker([p.lat, p.lon], {
+          radius: radioParcela(p.superficie_ha),
+          color: '#ffffff',
+          weight: 1.2,
+          opacity: 0.9,
+          fillColor: colorEstado(estado),
+          fillOpacity: estado === 'sin_clasificar' ? 0.5 : 0.82,
+        });
+        marker.bindPopup(popupParcela(p), { maxWidth: 300, closeButton: true });
+        marker.bindTooltip(`${p.nombre} · ${p.cultivo}`, { direction: 'top', offset: [0, -6], opacity: 0.9 });
+        marker.addTo(capas[estado]);
+        mapCtx.markers.set(p.id, marker);
+      }
+    }
+
+    const firmaTecnicos = state.tecnicos
+      .map((t) => `${t.id}:${t.carga}:${t.casos}:${t.brotes}:${t.disponible}`)
+      .join('|');
+    if (firmaTecnicos !== mapCtx.firmaTecnicos) {
+      mapCtx.firmaTecnicos = firmaTecnicos;
+      if (mapCtx.tecnicosLayer) mapCtx.tecnicosLayer.clearLayers();
+
+      for (const t of state.tecnicos) {
+        if (t.lat == null || t.lon == null) continue;
+        const marker = window.L.marker([t.lat, t.lon], {
+          icon: iconoTecnico(t),
+          title: `Técnico ${t.nombre || t.id}`,
+          alt: `Técnico ${t.nombre || t.id}`,
+          keyboard: true,
+        });
+        marker.bindPopup(popupTecnico(t), { maxWidth: 280, closeButton: true });
+        marker.bindTooltip(`👷 ${t.nombre || t.id} · carga ${t.carga ?? '—'}`, {
+          direction: 'top',
+          offset: [0, -12],
+          opacity: 0.95,
+        });
+        marker.addTo(mapCtx.tecnicosLayer);
+      }
     }
 
     aplicarCapas();
 
     if (hay && !mapCtx.encuadrado) {
-      map.fitBounds(bounds.pad(0.06), { maxZoom: 12 });
+      mapCtx.map.fitBounds(bounds.pad(0.06), { maxZoom: 12 });
       mapCtx.encuadrado = true;
     }
   }
@@ -405,6 +529,13 @@
       if (activa && !enMapa) capa.addTo(mapCtx.map);
       if (!activa && enMapa) mapCtx.map.removeLayer(capa);
     }
+
+    const tecnicosLayer = mapCtx.tecnicosLayer;
+    if (tecnicosLayer) {
+      const enMapa = mapCtx.map.hasLayer(tecnicosLayer);
+      if (state.tecnicosVisible && !enMapa) tecnicosLayer.addTo(mapCtx.map);
+      if (!state.tecnicosVisible && enMapa) mapCtx.map.removeLayer(tecnicosLayer);
+    }
   }
 
   function enfocarParcela(parcelaId) {
@@ -417,7 +548,7 @@
   }
 
   function filtrarPorParcela(parcelaId) {
-    state.filtros = { tipo: '', urgencia: '', cultivo: '', q: parcelaId };
+    state.filtros = { tipo: '', urgencia: '', semaforo: '', brote: '', cultivo: '', q: parcelaId };
     sincronizarControles();
     renderTabla();
     const total = filtrarReportes().length;
@@ -463,6 +594,27 @@
         </li>`;
       })
       .join('');
+
+    renderSemaforoPanel();
+  }
+
+  function renderSemaforoPanel() {
+    if (!el.semaforoList) return;
+    const sem = (state.resumen && state.resumen.casos && state.resumen.casos.semaforo) || {};
+    const filas = Object.entries(SEMAFORO).map(([id, info]) => ({ id, info, value: sem[id] || 0 }));
+    if (sem.sin_dato) filas.push({ id: 'sin_dato', info: { label: 'Sin dato', color: '#8fa99a' }, value: sem.sin_dato });
+    const total = filas.reduce((s, f) => s + f.value, 0);
+    el.semaforoList.innerHTML = filas
+      .map(({ info, value }) => {
+        const pct = total ? Math.round((value / total) * 100) : 0;
+        return `<li>
+          <span class="dot" style="background:${info.color}"></span>
+          <span class="lg-label">${info.label}</span>
+          <span class="lg-value">${nf.format(value)}</span>
+          <span class="lg-pct">${pct}%</span>
+        </li>`;
+      })
+      .join('');
   }
 
   function renderTopParcelas() {
@@ -478,7 +630,7 @@
             <span class="rk-name">${esc(p.nombre)}</span>
             <span class="rk-sub">${esc(p.cultivo)} · ${esc(p.localidad || '')}</span>
           </div>
-          <span class="rk-count ${p.urgentes ? 'is-urgent' : ''}" title="${p.reportes} reportes · ${p.urgentes} urgentes">${nf.format(p.reportes)}</span>
+          <span class="rk-count ${p.urgentes ? 'is-urgent' : ''}" title="${p.reportes} reportes · ${p.urgentes} urgentes${p.semaforo ? ` · semáforo ${SEMAFORO[p.semaforo].label}` : ''}${p.brote ? ' · brote activo' : ''}">${nf.format(p.reportes)}</span>
         </li>`)
       .join('');
 
@@ -516,7 +668,7 @@
       el.chartPlagas.innerHTML = plagas
         .map((p) => {
           const clase = p.urgente_regla ? 'is-urgent' : p.id === 'desconocida' ? 'is-unknown' : '';
-          const tooltip = `${p.casos} casos · ${p.urgentes} urgentes · ${p.parcelas} parcelas`;
+          const tooltip = `${p.casos} casos · ${p.urgentes} urgentes · ${p.brotes || 0} brotes · ${p.parcelas} parcelas`;
           return `<div class="bar-row" title="${esc(tooltip)}">
             <span class="bar-label">${esc(p.nombre)}</span>
             <span class="bar-track"><span class="bar-fill ${clase}" data-w="${((p.casos / max) * 100).toFixed(1)}"></span></span>
@@ -562,16 +714,24 @@
   // Tabla / monitor de casos
   // ---------------------------------------------------------------------
   function filtrarReportes() {
-    const { tipo, urgencia, cultivo, q } = state.filtros;
+    const { tipo, urgencia, semaforo, brote, cultivo, q } = state.filtros;
     const term = q.trim().toLowerCase();
     return state.reportes.filter((r) => {
       if (tipo && r.tipo !== tipo) return false;
       if (urgencia && r.estado !== urgencia) return false;
+      if (semaforo === 'sin_dato') {
+        if (!(r.es_plaga && !r.semaforo)) return false;
+      } else if (semaforo && r.semaforo !== semaforo) {
+        return false;
+      }
+      if (brote === '1' && !r.brote) return false;
+      if (brote === '0' && r.brote) return false;
       if (cultivo && r.cultivo !== cultivo) return false;
       if (term) {
         const blob = [
           r.id, r.texto, r.productor_nombre, r.productor_id, r.parcela_id, r.parcela_nombre,
-          r.cultivo, r.plaga_nombre, r.localidad, r.municipio,
+          r.cultivo, r.plaga_nombre, r.localidad, r.municipio, r.semaforo,
+          r.tecnico_id, r.tecnico_nombre,
         ].join(' ').toLowerCase();
         if (!blob.includes(term)) return false;
       }
@@ -589,6 +749,9 @@
         case 'productor': return `${r.productor_nombre || ''} ${r.parcela_nombre || ''}`.toLowerCase();
         case 'cultivo': return (r.cultivo || '').toLowerCase();
         case 'plaga': return (r.plaga_nombre || 'zzz').toLowerCase();
+        case 'semaforo': return r.semaforo ? SEMAFORO[r.semaforo].orden : 4;
+        case 'tecnico': return (r.tecnico_nombre || r.tecnico_id || 'zzz').toLowerCase();
+        case 'brote': return r.brote ? 0 : 1;
         case 'estado': return (ESTADOS[r.estado] || ESTADOS.sin_clasificar).prioridad;
         default: return '';
       }
@@ -611,15 +774,25 @@
     const filtrados = ordenarReportes(filtrarReportes());
     const total = state.reportes.length;
     el.casosSub.textContent = `${nf.format(filtrados.length)} de ${nf.format(total)} reportes · ordenados por ${
-      { id: 'reporte', recibido: 'fecha', productor: 'productor', cultivo: 'cultivo', plaga: 'diagnóstico', estado: 'prioridad' }[state.orden.key]
+      {
+        id: 'reporte',
+        recibido: 'fecha',
+        productor: 'productor',
+        cultivo: 'cultivo',
+        plaga: 'diagnóstico',
+        semaforo: 'semáforo',
+        tecnico: 'técnico',
+        brote: 'brote',
+        estado: 'prioridad',
+      }[state.orden.key]
     }`;
 
     if (!state.reportes.length) {
-      el.tbody.innerHTML = '<tr><td colspan="6" class="empty">Sin reportes disponibles.</td></tr>';
+      el.tbody.innerHTML = '<tr><td colspan="9" class="empty">Sin reportes disponibles.</td></tr>';
       return;
     }
     if (!filtrados.length) {
-      el.tbody.innerHTML = '<tr><td colspan="6" class="empty">Ningún caso coincide con los filtros.</td></tr>';
+      el.tbody.innerHTML = '<tr><td colspan="9" class="empty">Ningún caso coincide con los filtros.</td></tr>';
       return;
     }
 
@@ -636,6 +809,16 @@
         : r.clasificado
           ? '<span class="badge badge-sin_plaga">No es plaga</span>'
           : '<span class="badge badge-sin_clasificar">Pendiente</span>';
+      const semaforoCell = r.semaforo
+        ? badgeSemaforo(r.semaforo, r.prioridad)
+        : r.seguimiento
+          ? '<span class="badge badge-neutral">Seguimiento</span>'
+          : '<span class="cell-sub">—</span>';
+      const tecnicoCell = r.tecnico_id
+        ? `<span class="cell-main">${esc(r.tecnico_nombre || r.tecnico_id)}</span>${
+            r.tecnico_nombre ? `<span class="cell-sub">${esc(r.tecnico_id)}</span>` : ''
+          }`
+        : `<span class="cell-sub">${r.es_plaga && !r.seguimiento ? 'Sin asignar' : '—'}</span>`;
       tr.innerHTML = `
         <td><span class="cell-id">${esc(r.id)}</span></td>
         <td class="cell-date">${esc(fecha(r.recibido))}</td>
@@ -648,6 +831,9 @@
           <span class="cell-sub">${esc(r.etapa || '')}</span>
         </td>
         <td>${diag}<span class="cell-sub"><span class="tipo">${icono}</span>${esc(tipoLabel)}</span></td>
+        <td>${semaforoCell}</td>
+        <td>${tecnicoCell}</td>
+        <td>${badgeBrote(r.brote)}</td>
         <td>${badgeEstado(r.estado)}</td>
       `;
       tr.addEventListener('click', () => abrirDetalle(r));
@@ -665,6 +851,8 @@
   function sincronizarControles() {
     $$('.seg', el.filtroTipo).forEach((b) => b.classList.toggle('is-on', b.dataset.tipo === state.filtros.tipo));
     el.filtroUrgencia.value = state.filtros.urgencia;
+    el.filtroSemaforo.value = state.filtros.semaforo;
+    el.filtroBrote.value = state.filtros.brote;
     el.filtroCultivo.value = state.filtros.cultivo;
     el.q.value = state.filtros.q;
   }
@@ -714,7 +902,11 @@
     el.modalBody.innerHTML = `
       <div class="popup-badges">
         ${badgeEstado(r.estado)}
+        ${r.semaforo ? badgeSemaforo(r.semaforo, r.prioridad) : ''}
+        ${r.brote ? badgeBrote(true) : ''}
+        ${r.seguimiento ? '<span class="badge badge-neutral">Seguimiento</span>' : ''}
         ${r.plaga_nombre ? `<span class="badge badge-neutral">${esc(r.plaga_nombre)}</span>` : ''}
+        ${r.tecnico_id ? `<span class="badge badge-neutral">👷 ${esc(r.tecnico_nombre || r.tecnico_id)}</span>` : ''}
         <span class="badge badge-neutral">${esc(TIPO_LABEL[r.tipo] || r.tipo || '—')}</span>
       </div>
       ${texto}
@@ -724,6 +916,11 @@
         <div><dt>Parcela</dt><dd>${esc(r.parcela_id || '—')} · ${esc(r.parcela_nombre || '—')}</dd></div>
         <div><dt>Cultivo / etapa</dt><dd>${esc(r.cultivo || '—')}${r.etapa ? ` · ${esc(r.etapa)}` : ''}</dd></div>
         <div><dt>Localidad</dt><dd>${esc(r.localidad || '—')}, ${esc(r.municipio || '')}</dd></div>
+        <div><dt>Semáforo</dt><dd>${r.semaforo ? `${SEMAFORO[r.semaforo].emoji} ${SEMAFORO[r.semaforo].label}` : '—'}</dd></div>
+        <div><dt>Prioridad / afectación</dt><dd>${r.prioridad != null ? `${nf.format(r.prioridad)}/100` : '—'}${r.pct != null ? ` · ${n1.format(r.pct)} %` : ''}</dd></div>
+        <div><dt>Técnico asignado</dt><dd>${r.tecnico_id ? `${esc(r.tecnico_nombre || r.tecnico_id)}${r.tecnico_nombre ? ` · ${esc(r.tecnico_id)}` : ''}` : (r.es_plaga && !r.seguimiento ? 'Sin asignar' : '—')}</dd></div>
+        <div><dt>Brote</dt><dd>${r.seguimiento ? 'No aplica (seguimiento)' : r.brote ? '🦠 Sí, brote activo' : 'No'}</dd></div>
+        ${r.seguimiento ? `<div><dt>Seguimiento de</dt><dd>${esc(r.seguimiento_de || 'caso previo')}</dd></div>` : ''}
         <div><dt>Recibido</dt><dd>${esc(fecha(r.recibido))}</dd></div>
         <div><dt>Coordenadas</dt><dd>${r.lat != null && r.lon != null ? `${Number(r.lat).toFixed(5)}, ${Number(r.lon).toFixed(5)}` : '—'}</dd></div>
       </dl>
@@ -823,6 +1020,14 @@
       state.filtros.urgencia = e.target.value;
       renderTabla();
     });
+    el.filtroSemaforo.addEventListener('change', (e) => {
+      state.filtros.semaforo = e.target.value;
+      renderTabla();
+    });
+    el.filtroBrote.addEventListener('change', (e) => {
+      state.filtros.brote = e.target.value;
+      renderTabla();
+    });
     el.filtroCultivo.addEventListener('change', (e) => {
       state.filtros.cultivo = e.target.value;
       renderTabla();
@@ -839,7 +1044,7 @@
     });
 
     el.limpiar.addEventListener('click', () => {
-      state.filtros = { tipo: '', urgencia: '', cultivo: '', q: '' };
+      state.filtros = { tipo: '', urgencia: '', semaforo: '', brote: '', cultivo: '', q: '' };
       sincronizarControles();
       renderTabla();
     });
@@ -871,7 +1076,14 @@
     el.mapToggles.addEventListener('click', (e) => {
       const btn = e.target.closest('.toggle');
       if (!btn) return;
+      if (btn.dataset.capa === 'tecnicos') {
+        state.tecnicosVisible = !state.tecnicosVisible;
+        btn.classList.toggle('is-on', state.tecnicosVisible);
+        aplicarCapas();
+        return;
+      }
       const estado = btn.dataset.estado;
+      if (!estado) return;
       if (state.capas.has(estado)) state.capas.delete(estado);
       else state.capas.add(estado);
       btn.classList.toggle('is-on', state.capas.has(estado));

@@ -50,6 +50,8 @@ const PLAGAS_URGENTES = new Set([
   'gorgojo_khapra',
 ]);
 
+const SEMAFOROS = ['rojo', 'naranja', 'amarillo', 'verde'];
+
 const DATA_KEYS = ['parcelas', 'plagas', 'reportes', 'productores', 'tecnicos', 'equipo'];
 const FALLBACK_FILES = {
   parcelas: 'parcelas.json',
@@ -152,11 +154,37 @@ async function getData(name, { force = false } = {}) {
 // ---------------------------------------------------------------------------
 // Agregaciones
 // ---------------------------------------------------------------------------
+function semaforoDeCaso(caso) {
+  if (!caso || !caso.es_plaga) return null;
+  const valor = String(caso.semaforo || '').toLowerCase();
+  if (SEMAFOROS.includes(valor)) return valor;
+  // Cachés de la primera versión del nivel 2 pueden traer prioridad sin semáforo.
+  const prioridad = numeroONull(caso.prioridad);
+  if (prioridad == null) return null;
+  if (prioridad >= 85) return 'rojo';
+  if (prioridad >= 70) return 'naranja';
+  if (prioridad >= 40) return 'amarillo';
+  return 'verde';
+}
+
+function esUrgente(caso) {
+  const semaforo = semaforoDeCaso(caso);
+  if (semaforo) return semaforo === 'rojo' || semaforo === 'naranja';
+  // Respaldo para cachés antiguas que todavía solo traen `urgente`.
+  return Boolean(caso && caso.urgente);
+}
+
 function estadoDeCaso(caso) {
   if (!caso) return 'sin_clasificar';
-  if (caso.urgente) return 'urgente';
-  if (caso.es_plaga) return 'plaga';
-  return 'sin_plaga';
+  if (!caso.es_plaga) return 'sin_plaga';
+  if (esUrgente(caso) || Boolean(caso.brote)) return 'urgente';
+  return 'plaga';
+}
+
+function numeroONull(valor) {
+  if (valor == null || valor === '') return null;
+  const n = Number(valor);
+  return Number.isFinite(n) ? n : null;
 }
 
 function nombrePlaga(plagasPorId, id) {
@@ -172,12 +200,19 @@ function construirModelo(records) {
   const reportes = records.reportes?.data || [];
   const productores = records.productores?.data || [];
   const casos = records.casos?.data || [];
+  const tecnicos = records.tecnicos?.data || [];
   const equipo = records.equipo?.data || null;
 
   const plagasPorId = new Map(plagas.map((p) => [p.id, p]));
   const productoresPorId = new Map(productores.map((p) => [p.id, p]));
   const parcelasPorId = new Map(parcelas.map((p) => [p.id, p]));
   const casosPorReporte = new Map(casos.map((c) => [c.reporte_id, c]));
+  const tecnicosPorId = new Map(tecnicos.map((t) => [t.id, t]));
+  const nombreTecnico = (id) => {
+    if (!id) return null;
+    const t = tecnicosPorId.get(id);
+    return t ? t.nombre : null;
+  };
 
   // --- Reportes enriquecidos --------------------------------------------
   const reportesEnriquecidos = reportes
@@ -185,14 +220,24 @@ function construirModelo(records) {
       const caso = casosPorReporte.get(r.id) || null;
       const parcela = parcelasPorId.get(r.parcela_id) || null;
       const productor = productoresPorId.get(r.productor_id) || null;
+      const semaforo = semaforoDeCaso(caso);
+      const tecnicoId = caso && caso.es_plaga ? caso.tecnico_id || null : null;
       return {
         ...r,
         plaga_id: caso && caso.es_plaga ? caso.plaga || 'desconocida' : null,
         plaga_nombre: caso && caso.es_plaga ? nombrePlaga(plagasPorId, caso.plaga || 'desconocida') : null,
         es_plaga: caso ? Boolean(caso.es_plaga) : null,
-        urgente: Boolean(caso && caso.urgente),
+        urgente: esUrgente(caso),
         estado: estadoDeCaso(caso),
         clasificado: Boolean(caso),
+        semaforo,
+        prioridad: caso && caso.prioridad != null ? caso.prioridad : null,
+        pct: caso ? caso._pct ?? caso.pct ?? null : null,
+        brote: Boolean(caso && caso.brote),
+        tecnico_id: tecnicoId,
+        tecnico_nombre: nombreTecnico(tecnicoId),
+        seguimiento: Boolean(caso && (caso.seguimiento_de || caso.seguimiento)),
+        seguimiento_de: caso && caso.seguimiento_de ? caso.seguimiento_de : null,
         parcela_nombre: parcela ? parcela.nombre : null,
         cultivo: parcela ? parcela.cultivo : null,
         etapa: parcela ? parcela.etapa : null,
@@ -209,9 +254,19 @@ function construirModelo(records) {
 
   const casosEnriquecidos = casos.map((c) => {
     const rep = reportesPorId.get(c.reporte_id) || null;
+    const { _pct, _nivel2, ...caso } = c;
+    const semaforo = semaforoDeCaso(c);
     return {
-      ...c,
+      ...caso,
       estado: estadoDeCaso(c),
+      urgente: esUrgente(c),
+      semaforo,
+      prioridad: c.prioridad != null ? c.prioridad : null,
+      pct: _pct ?? c.pct ?? null,
+      brote: Boolean(c.brote),
+      seguimiento: Boolean(c.seguimiento_de || c.seguimiento),
+      tecnico_id: c.es_plaga ? c.tecnico_id || null : null,
+      tecnico_nombre: nombreTecnico(c.es_plaga ? c.tecnico_id : null),
       plaga_nombre: c.es_plaga ? nombrePlaga(plagasPorId, c.plaga || 'desconocida') : null,
       tipo: rep ? rep.tipo : null,
       recibido: rep ? rep.recibido : null,
@@ -240,11 +295,20 @@ function construirModelo(records) {
 
     const plagasDetectadas = [...new Set(propios.filter((r) => r.plaga_id).map((r) => r.plaga_id))];
     const productor = productoresPorId.get(p.productor_id);
+    const ultimoPlaga = propios.find((r) => r.es_plaga && r.semaforo)
+      || propios.find((r) => r.es_plaga)
+      || null;
     return {
       ...p,
       estado,
       reportes: propios.length,
       urgentes: propios.filter((r) => r.urgente).length,
+      semaforo: ultimoPlaga ? ultimoPlaga.semaforo : null,
+      prioridad: ultimoPlaga ? ultimoPlaga.prioridad : null,
+      tecnico_id: ultimoPlaga ? ultimoPlaga.tecnico_id : null,
+      tecnico_nombre: ultimoPlaga ? ultimoPlaga.tecnico_nombre : null,
+      brote: propios.some((r) => r.brote),
+      brotes: propios.filter((r) => r.brote).length,
       plaga_ids: plagasDetectadas,
       plagas: plagasDetectadas.map((id) => nombrePlaga(plagasPorId, id)),
       productor_nombre: productor ? productor.nombre : null,
@@ -258,23 +322,62 @@ function construirModelo(records) {
   for (const p of parcelasEnriquecidas) parcelasPorEstado[p.estado] += 1;
 
   // --- Totales de casos ---------------------------------------------------
-  const conClasificacion = casos.length;
-  const urgentes = casos.filter((c) => c.urgente).length;
-  const esPlaga = casos.filter((c) => c.es_plaga).length;
-  const noPlaga = casos.filter((c) => !c.es_plaga).length;
+  const conClasificacion = casosEnriquecidos.length;
+  const urgentes = casosEnriquecidos.filter((c) => esUrgente(c)).length;
+  const esPlaga = casosEnriquecidos.filter((c) => c.es_plaga).length;
+  const noPlaga = casosEnriquecidos.filter((c) => !c.es_plaga).length;
   const sinClasificar = Math.max(0, reportes.length - casosPorReporte.size);
+  const brotes = casosEnriquecidos.filter((c) => c.brote).length;
+  const conTecnico = casosEnriquecidos.filter((c) => c.es_plaga && c.tecnico_id).length;
+  const seguimientos = casosEnriquecidos.filter((c) => c.seguimiento).length;
+
+  const semaforoCasos = { rojo: 0, naranja: 0, amarillo: 0, verde: 0, sin_dato: 0 };
+  for (const c of casosEnriquecidos) {
+    if (!c.es_plaga) continue;
+    semaforoCasos[c.semaforo || 'sin_dato'] += 1;
+  }
+
+  // --- Técnicos -----------------------------------------------------------
+  const tecnicosEnriquecidos = tecnicos.map((t) => {
+    const asignados = casosEnriquecidos.filter((c) => c.tecnico_id === t.id);
+    const carga = numeroONull(t.carga);
+    return {
+      ...t,
+      lat: numeroONull(t.lat),
+      lon: numeroONull(t.lon),
+      carga,
+      tope: numeroONull(t.tope),
+      disponible: carga != null && carga < 5,
+      casos: asignados.length,
+      brotes: asignados.filter((c) => c.brote).length,
+      rojos: asignados.filter((c) => c.semaforo === 'rojo').length,
+      naranjas: asignados.filter((c) => c.semaforo === 'naranja').length,
+    };
+  }).sort((a, b) => {
+    if (a.disponible !== b.disponible) return a.disponible ? -1 : 1;
+    return (a.carga ?? 99) - (b.carga ?? 99) || String(a.id).localeCompare(String(b.id));
+  });
+
+  const cargas = tecnicosEnriquecidos.map((t) => t.carga).filter((v) => v != null);
+  const tecnicosResumen = {
+    total: tecnicosEnriquecidos.length,
+    disponibles: tecnicosEnriquecidos.filter((t) => t.disponible).length,
+    asignados: new Set(casosEnriquecidos.filter((c) => c.tecnico_id).map((c) => c.tecnico_id)).size,
+    carga_media: cargas.length ? Math.round((cargas.reduce((s, v) => s + v, 0) / cargas.length) * 10) / 10 : null,
+  };
 
   const avance = (equipo && equipo.avance) || {};
 
   // --- Conteo por plaga ---------------------------------------------------
   const porPlagaMap = new Map();
-  for (const c of casos) {
+  for (const c of casosEnriquecidos) {
     if (!c.es_plaga) continue;
     const id = c.plaga || 'desconocida';
-    if (!porPlagaMap.has(id)) porPlagaMap.set(id, { id, casos: 0, urgentes: 0, parcelas: new Set() });
+    if (!porPlagaMap.has(id)) porPlagaMap.set(id, { id, casos: 0, urgentes: 0, brotes: 0, parcelas: new Set() });
     const entry = porPlagaMap.get(id);
     entry.casos += 1;
-    if (c.urgente) entry.urgentes += 1;
+    if (esUrgente(c)) entry.urgentes += 1;
+    if (c.brote) entry.brotes += 1;
     const rep = reportesPorId.get(c.reporte_id);
     if (rep && rep.parcela_id) entry.parcelas.add(rep.parcela_id);
   }
@@ -287,6 +390,7 @@ function construirModelo(records) {
       urgente_regla: PLAGAS_URGENTES.has(e.id),
       casos: e.casos,
       urgentes: e.urgentes,
+      brotes: e.brotes,
       parcelas: e.parcelas.size,
     }))
     .sort((a, b) => b.casos - a.casos || b.urgentes - a.urgentes);
@@ -341,6 +445,9 @@ function construirModelo(records) {
       estado: p.estado,
       reportes: p.reportes,
       urgentes: p.urgentes,
+      semaforo: p.semaforo,
+      tecnico_nombre: p.tecnico_nombre,
+      brote: p.brote,
       plagas: p.plagas,
     }));
 
@@ -383,7 +490,8 @@ function construirModelo(records) {
       parcelas: parcelas.length,
       reportes: reportes.length,
       productores: productores.length,
-      tecnicos: (records.tecnicos?.data || []).length,
+      tecnicos: tecnicosEnriquecidos.length,
+      tecnicos_disponibles: tecnicosResumen.disponibles,
       plagas_catalogo: plagas.length,
       superficie_ha: Math.round(parcelasEnriquecidas.reduce((s, p) => s + (Number(p.superficie_ha) || 0), 0) * 10) / 10,
     },
@@ -394,7 +502,12 @@ function construirModelo(records) {
       urgentes,
       plaga_normal: esPlaga - urgentes,
       no_plaga: noPlaga,
+      semaforo: semaforoCasos,
+      brotes,
+      con_tecnico: conTecnico,
+      seguimientos,
     },
+    tecnicos: tecnicosResumen,
     parcelas_estado: parcelasPorEstado,
     reportes_por_tipo: reportesPorTipo,
     por_plaga: porPlaga,
@@ -403,7 +516,13 @@ function construirModelo(records) {
     top_parcelas: topParcelas,
   };
 
-  return { resumen, parcelas: parcelasEnriquecidas, reportes: reportesEnriquecidos, casos: casosEnriquecidos };
+  return {
+    resumen,
+    parcelas: parcelasEnriquecidas,
+    reportes: reportesEnriquecidos,
+    casos: casosEnriquecidos,
+    tecnicos: tecnicosEnriquecidos,
+  };
 }
 
 async function cargarTodo({ force = false } = {}) {
@@ -465,10 +584,12 @@ app.get('/api/parcelas', asyncRoute(async (req, res) => {
   const force = req.query.refresh === '1';
   const { parcelas } = await cargarTodo({ force });
   let datos = parcelas;
-  const { estado, cultivo, municipio, q } = req.query;
+  const { estado, cultivo, municipio, semaforo, brote, q } = req.query;
   if (estado) datos = datos.filter((p) => p.estado === estado);
   if (cultivo) datos = datos.filter((p) => p.cultivo === cultivo);
   if (municipio) datos = datos.filter((p) => p.municipio === municipio);
+  if (semaforo) datos = datos.filter((p) => p.semaforo === semaforo);
+  if (brote === '1' || brote === 'true') datos = datos.filter((p) => p.brote);
   if (q) {
     const term = String(q).toLowerCase();
     datos = datos.filter((p) => `${p.id} ${p.nombre} ${p.productor_nombre} ${p.localidad}`.toLowerCase().includes(term));
@@ -485,20 +606,43 @@ app.get('/api/reportes', asyncRoute(async (req, res) => {
   const force = req.query.refresh === '1';
   const { reportes } = await cargarTodo({ force });
   let datos = reportes;
-  const { tipo, estado, cultivo, urgente, q } = req.query;
+  const { tipo, estado, cultivo, urgente, semaforo, brote, tecnico, q } = req.query;
   if (tipo) datos = datos.filter((r) => r.tipo === tipo);
   if (estado) datos = datos.filter((r) => r.estado === estado);
   if (cultivo) datos = datos.filter((r) => r.cultivo === cultivo);
   if (urgente === '1' || urgente === 'true') datos = datos.filter((r) => r.urgente);
+  if (semaforo === 'sin_dato') datos = datos.filter((r) => r.es_plaga && !r.semaforo);
+  else if (semaforo) datos = datos.filter((r) => r.semaforo === semaforo);
+  if (brote === '1' || brote === 'true') datos = datos.filter((r) => r.brote);
+  if (tecnico) datos = datos.filter((r) => r.tecnico_id === tecnico);
   if (q) {
     const term = String(q).toLowerCase();
     datos = datos.filter((r) =>
-      `${r.id} ${r.texto || ''} ${r.productor_nombre || ''} ${r.parcela_nombre || ''} ${r.plaga_nombre || ''}`
+      `${r.id} ${r.texto || ''} ${r.productor_nombre || ''} ${r.parcela_nombre || ''} ${r.plaga_nombre || ''} ${r.tecnico_nombre || ''} ${r.semaforo || ''}`
         .toLowerCase()
         .includes(term),
     );
   }
   res.json({ total: datos.length, generado: new Date().toISOString(), reportes: datos });
+}));
+
+app.get('/api/tecnicos', asyncRoute(async (req, res) => {
+  const force = req.query.refresh === '1';
+  const { tecnicos } = await cargarTodo({ force });
+  let datos = tecnicos;
+  const { especialidad, disponible, q } = req.query;
+  if (especialidad) datos = datos.filter((t) => t.especialidad === especialidad);
+  if (disponible === '1' || disponible === 'true') datos = datos.filter((t) => t.disponible);
+  if (q) {
+    const term = String(q).toLowerCase();
+    datos = datos.filter((t) => `${t.id} ${t.nombre} ${t.base || ''}`.toLowerCase().includes(term));
+  }
+  res.json({
+    total: datos.length,
+    total_tecnicos: tecnicos.length,
+    generado: new Date().toISOString(),
+    tecnicos: datos,
+  });
 }));
 
 app.get('/api/plagas', asyncRoute(async (req, res) => {
@@ -520,11 +664,18 @@ app.get('/api/equipo', asyncRoute(async (req, res) => {
 app.get('/api/casos', asyncRoute(async (req, res) => {
   const force = req.query.refresh === '1';
   const { casos } = await cargarTodo({ force });
+  const semaforo = { rojo: 0, naranja: 0, amarillo: 0, verde: 0, sin_dato: 0 };
+  for (const c of casos) {
+    if (!c.es_plaga) continue;
+    semaforo[c.semaforo || 'sin_dato'] += 1;
+  }
   res.json({
     total: casos.length,
     fuente: store.get('casos') ? store.get('casos').source : 'no disponible',
     actualizado: new Date().toISOString(),
     urgentes: casos.filter((c) => c.urgente).length,
+    brotes: casos.filter((c) => c.brote).length,
+    semaforo,
     casos,
   });
 }));

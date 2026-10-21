@@ -274,7 +274,7 @@ svg { display: block; }
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -308,6 +308,16 @@ svg { display: block; }
   inset: 0 auto 0 0;
   width: 3px;
   background: var(--urgent);
+  opacity: 0.75;
+}
+
+.kpi--brote .kpi-value { color: #9a5cff; }
+.kpi--brote::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #9a5cff;
   opacity: 0.75;
 }
 
@@ -453,6 +463,36 @@ svg { display: block; }
 .dot-sin_plaga { background: var(--green-500); }
 .dot-sin_clasificar { background: #9aa8a0; }
 
+.marker-tech-legend {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 2px;
+  background: #7c5cff;
+  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.35);
+}
+
+.tech-marker {
+  background: transparent;
+  border: 0;
+}
+.tech-marker-dot {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 2px solid #fff;
+  background: #1f7a44;
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.tech-marker-dot.is-fito { background: #7c5cff; }
+
 .map-legend {
   position: absolute;
   left: 12px;
@@ -582,6 +622,16 @@ svg { display: block; }
 }
 .donut-center small { font-size: 11px; color: var(--muted); }
 
+.mini-title {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 .legend-list { display: grid; gap: 2px; }
 .legend-list li {
   display: grid;
@@ -788,7 +838,7 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.8px;
-  min-width: 860px;
+  min-width: 1080px;
 }
 
 thead th {
@@ -885,6 +935,11 @@ tbody tr:last-child td { border-bottom: none; }
 .badge-sin_plaga { background: var(--green-soft); color: #14683a; border-color: #cde4d6; }
 .badge-sin_clasificar { background: var(--slate-soft); color: #5d6f65; border-color: #dbe3dd; }
 .badge-neutral { background: var(--bg-soft); color: var(--ink-soft); border-color: var(--line); }
+.badge-semaforo-rojo { background: var(--urgent-soft); color: #a02222; border-color: #f3cfcf; }
+.badge-semaforo-naranja { background: #fff0dc; color: #945200; border-color: #f2d5ac; }
+.badge-semaforo-amarillo { background: #fbf6d9; color: #7c6606; border-color: #e8dfa9; }
+.badge-semaforo-verde { background: var(--green-soft); color: #14683a; border-color: #cde4d6; }
+.badge-brote { background: #f2e9ff; color: #6d3bb5; border-color: #ddc9f7; }
 
 .badge .dot { width: 6px; height: 6px; flex-basis: 6px; }
 
@@ -1003,7 +1058,7 @@ tbody tr:last-child td { border-bottom: none; }
    Responsivo
    -------------------------------------------------------------------------- */
 @media (max-width: 1240px) {
-  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
     grid-template-areas:
@@ -1409,6 +1464,38 @@ tbody tr.is-urgente td:first-child { box-shadow: inset 3px 0 0 rgba(255, 107, 10
   color: var(--ink-soft);
   border-color: var(--line);
 }
+.kpi--brote .kpi-value { color: #c9a7ff; }
+.kpi--brote::before { background: #9a5cff; }
+.badge-semaforo-rojo {
+  background: rgba(255, 107, 107, 0.14);
+  color: #ffb3ab;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+.badge-semaforo-naranja {
+  background: rgba(255, 184, 77, 0.14);
+  color: #ffd28a;
+  border-color: rgba(255, 184, 77, 0.3);
+}
+.badge-semaforo-amarillo {
+  background: rgba(232, 197, 71, 0.14);
+  color: #f4e39a;
+  border-color: rgba(232, 197, 71, 0.3);
+}
+.badge-semaforo-verde {
+  background: rgba(45, 212, 167, 0.12);
+  color: #9df5d8;
+  border-color: rgba(45, 212, 167, 0.3);
+}
+.badge-brote {
+  background: rgba(154, 92, 255, 0.16);
+  color: #d8c2ff;
+  border-color: rgba(154, 92, 255, 0.35);
+}
+.tech-marker-dot {
+  border-color: #0b140e;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.75);
+}
+.marker-tech-legend { box-shadow: 0 0 0 1px rgba(154, 92, 255, 0.5); }
 
 /* Modal */
 .modal { background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(4px); }
