@@ -215,9 +215,14 @@ class ResultadoNivel2:
         }
 
 
-def resolver(plaga: dict, parcela: dict, texto: str | None, tecnicos: list[dict]) -> ResultadoNivel2:
-    """Aplica las tres reglas en orden y devuelve el bloque del caso."""
-    pct = extraer_pct(texto)
+def resolver(plaga: dict, parcela: dict, texto: str | None, tecnicos: list[dict],
+             pct_ia: int | None = None) -> ResultadoNivel2:
+    """Aplica las tres reglas en orden y devuelve el bloque del caso.
+
+    `pct_ia` es el porcentaje que interpretó la IA (paso 2); si viene, se usa
+    en la prioridad; si no, se extrae del texto (o 10 por omisión).
+    """
+    pct = extraer_pct(texto) if pct_ia is None else max(0, min(100, int(pct_ia)))
     prioridad = calcular_prioridad(plaga, parcela, pct)
     semaforo = calcular_semaforo(prioridad)
     tecnico = elegir_tecnico(tecnicos, plaga, parcela)

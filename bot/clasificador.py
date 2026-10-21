@@ -160,6 +160,8 @@ class Clasificador:
         self.parcelas = {p["id"]: p for p in cargar_catalogo("parcelas")}
         self.plagas = cargar_catalogo("plagas")
         self.con_ia = con_ia and bool(os.getenv("OPENROUTER_API_KEY"))
+        self.ia_texto = self.con_ia and os.getenv("INTERPRETAR_IA", "0") == "1"
+        self._interpretador = None
         self._tecnicos_cache: dict[str, list] = {}
         self._visitas: set[str] | None = None
 
@@ -221,6 +223,32 @@ class Clasificador:
             "puntuame",
         ]
         return any(p in t for p in patrones)
+
+    # ---------- paso 2: INTERPRETAR con IA (JSON estricto + respaldo) ----------
+    def _interpretar_con_ia(self, texto: str | None, cultivo: str | None) -> dict | None:
+        """Interpreta el mensaje con la IA (OpenRouter, JSON estricto).
+
+        Solo se usa si INTERPRETAR_IA=1 (viene del flujo oficial del reto).
+        Si no hay API, timeout o JSON inválido, devuelve None y el llamador
+        usa las reglas deterministas (nunca se arriesga un punto por un fallo).
+        """
+        if not self.ia_texto or not texto:
+            return None
+        try:
+            if self._interpretador is None:
+                from interpretar import InterpretadorIA
+
+                self._interpretador = InterpretadorIA()
+            if not self._interpretador.disponible():
+                return None
+            candidatas = self.cultivares_compatibles(cultivo) if cultivo else None
+            resultado = self._interpretador.interpretar(texto, cultivo, candidatas or None)
+            if resultado and "pct" in resultado:
+                resultado["pct_ia"] = resultado.pop("pct")
+            return resultado
+        except Exception as exc:
+            print(f"[ia_texto] falló, uso reglas: {exc}")
+            return None
 
     # ---------- motores ----------
 
@@ -328,7 +356,10 @@ class Clasificador:
             resultado = self._fusion_foto_texto(texto, rid=reporte.get("id"), cultivo=cultivo, audio=audio,
                                                foto=foto, etapa=etapa)
         elif tipo == "texto":
-            resultado = self.clasificar_texto(texto, cultivo)
+            # Paso 2 del reto: IA estricta si está activada; si no, reglas.
+            resultado = self._interpretar_con_ia(texto, cultivo)
+            if resultado is None:
+                resultado = self.clasificar_texto(texto, cultivo)
         else:
             # voz y fotos sin pie: motor multimodal (STT/visión) con caché
             resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa, rid=reporte.get("id"))
@@ -447,7 +478,8 @@ class Clasificador:
 
         texto = resultado.get("texto") or reporte.get("texto") or ""
         tecnicos = self.tecnicos_en(reporte.get("recibido"))
-        n2 = resolver_nivel2(plaga, parcela, texto, tecnicos)
+        n2 = resolver_nivel2(plaga, parcela, texto, tecnicos,
+                             pct_ia=resultado.get("pct_ia"))
         datos = n2.como_dict()
         datos["detalle_nivel2"] = n2.detalle
         return datos
@@ -739,9 +771,10 @@ def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
     return casos
 
 
-# campos que acepta POST /casos; el resto es información local
+# campos que acepta POST /casos (flujo oficial del reto, paso 5);
+# `prioridad` es opcional (no da puntos, solo retroalimentación).
 CAMPOS_API = ("reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id",
-              "prioridad", "brote", "caso")
+              "prioridad", "brote")
 
 
 def caso_para_api(caso: dict) -> dict:

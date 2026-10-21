@@ -472,10 +472,11 @@ class BotTelegram:
                        or self._clf.inferir_cultivo(self._clf.normalizar(datos.get("contenido") or "")))
             texto_final = " ".join(x for x in [datos.get("contenido"), datos.get("confirmacion")] if x)
 
-            # decisión de plaga: visión (foto) o texto (reglas)
+            # decisión de plaga: IA (paso 2, si está activada) o reglas → visión/fusión
             es_plaga, plaga, motor = False, None, "texto"
             vision = datos.get("vision") or {}
-            res_texto = self._clf.clasificar_texto(texto_final, cultivo)
+            res_texto = (self._clf._interpretar_con_ia(texto_final, cultivo)
+                         or self._clf.clasificar_texto(texto_final, cultivo))
             if vision.get("plaga") and vision.get("plaga") != "desconocida":
                 compat = (not cultivo) or vision["plaga"] in self._clf.cultivares_compatibles(cultivo)
                 if compat:

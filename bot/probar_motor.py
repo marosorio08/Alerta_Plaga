@@ -330,6 +330,36 @@ def main() -> None:
     else:
         print("  (se omite: caché sin R-2043/R-2035)")
 
+    print("\n[17] Paso 2 — IA: prompt, JSON estricto y respaldo a reglas")
+    from prompts import construir_prompt, normalizar_interpretacion, parsear_json
+    from nivel2 import resolver as resolver_con_pct_ia
+
+    prompt = construir_prompt("le cayó chahuixtle al frijol", "frijol",
+                              ["roya_frijol", "pulgon"])
+    revisar("el prompt incluye el cultivo", "frijol" in prompt)
+    revisar("el prompt exige solo JSON", '{"es_plaga": bool' in prompt)
+    revisar("el prompt neutraliza ingeniería social", "ignora tus" in prompt or "manipulen" in prompt)
+
+    obj = parsear_json('respuesta: {"es_plaga": true, "plaga": "roya_frijol", "pct": 30} fin')
+    revisar("extrae el JSON incrustado en texto", obj is not None and obj.get("plaga") == "roya_frijol")
+    revisar("JSON inválido -> None", parsear_json("no hay json") is None)
+
+    norm = normalizar_interpretacion({"es_plaga": True, "plaga": "pulgon", "pct": 50},
+                                     candidatas=["roya_frijol"], cultivo="frijol")
+    revisar("plaga incompatible con el cultivo -> desconocida", norm["plaga"] == "desconocida")
+    norm2 = normalizar_interpretacion({"es_plaga": True, "plaga": "roya_frijol", "pct": "ochenta"},
+                                      candidatas=["roya_frijol"])
+    revisar("pct no numérico -> 10 por omisión", norm2["pct"] == 10)
+    norm3 = normalizar_interpretacion({"es_plaga": False, "plaga": "x"})
+    revisar("no es plaga -> plaga None y pct 10", norm3["plaga"] is None and norm3["pct"] == 10)
+
+    # el pct que interpretó la IA se usa en la prioridad (regla del paso 3)
+    plaga_cog = next(p for p in clf.plagas if p["id"] == "gusano_cogollero")
+    parcela_ej = {"id": "P-X", "cultivo": "maíz", "etapa": "V8", "superficie_ha": 4.5}
+    r_ia = resolver_con_pct_ia(plaga_cog, parcela_ej, "no dice porcentaje", [], pct_ia=50)
+    revisar("pct_ia=50 -> prioridad 79 (ejemplo oficial)", r_ia.pct == 50 and r_ia.prioridad == 79,
+            f"-> pct={r_ia.pct} pri={r_ia.prioridad}")
+
     print("\n[10] Robustez ante catálogo cambiado por los organizadores")
     clf_nuevo = crear_clasificador()
     clf_nuevo.plagas = clf_nuevo.plagas + [{
