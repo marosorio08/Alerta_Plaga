@@ -1,0 +1,14 @@
+{
+  "name": "alerta-plaga-7_7",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Alerta Plaga — equipo 7_7 (IT Green × DIMA UACh): bot de clasificación y dashboard",
+  "scripts": {
+    "start": "node app_web/server.js",
+    "instalar": "npm --prefix app_web install --omit=dev",
+    "probar": "node --version"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
