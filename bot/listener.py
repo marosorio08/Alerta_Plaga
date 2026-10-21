@@ -697,6 +697,9 @@ def main() -> None:
     parser.add_argument("--telegram", action="store_true", help="Activar el agente del bot de Telegram")
     parser.add_argument("--vigilante", action="store_true",
                         help="Avisa por Telegram reportes por verificar / dudosos (no registra nada)")
+    parser.add_argument("--resolver-dudosos", action="store_true",
+                        help="Procesa la cola de dudosos con el flujo validado y registra "   
+                             "solo lo seguro (+Telegram con resultado y posición)")
     parser.add_argument("--reiniciar", action="store_true", help="Ignorar el estado y reprocesar todo")
     args = parser.parse_args()
 
@@ -709,6 +712,17 @@ def main() -> None:
                         extras=args.extras, preguntas=args.preguntas,
                         avisos_reales=args.avisos_reales, telegram=args.telegram,
                         vigilante=args.vigilante)
+    if args.resolver_dudosos:
+        try:
+            import threading
+            from resolver_cola import ResolverCola
+
+            resolver = ResolverCola(api=listener.api, telegram=args.telegram)
+            hilo = threading.Thread(target=resolver.correr, daemon=True, name="resolver-dudosos")
+            hilo.start()
+            print(f"[{ahora()}] resolver de dudosos activo (hilo {hilo.name})")
+        except Exception as exc:
+            print(f"[{ahora()}] no se pudo arrancar el resolver de dudosos: {exc}")
     listener.correr(una_vez=args.una_vez)
 
 
