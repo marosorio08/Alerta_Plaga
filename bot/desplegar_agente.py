@@ -43,6 +43,8 @@ ENV_AGENTE = f"""# Agente Alerta Plaga — generado en el despliegue (NO subir a
 API_BASE_URL={os.getenv('API_BASE_URL')}
 EQUIPO_TOKEN={os.getenv('EQUIPO_TOKEN')}
 OPENROUTER_API_KEY={os.getenv('OPENROUTER_API_KEY')}
+SUPABASE_URL={os.getenv('SUPABASE_URL', '')}
+SUPABASE_SERVICE_ROLE_KEY={os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')}
 TELEGRAM_BOT_TOKEN={os.getenv('TELEGRAM_BOT_TOKEN', '')}
 TELEGRAM_CHAT_ID={os.getenv('TELEGRAM_CHAT_ID', '')}
 # el agente escribe los casos donde los lee el dashboard

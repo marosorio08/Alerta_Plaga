@@ -79,14 +79,14 @@ class Listener:
         self.enviar = enviar
         self.preguntas = preguntas
         self.telegram = telegram
-        self.extras = Extras(self.api, seco=not avisos_reales) if extras else None
+        self.repo = RepositorioSupabase()
+        self.extras = Extras(self.api, seco=not avisos_reales, repo=self.repo) if extras else None
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
         self.estado = cargar_json(ESTADO, {"procesados": [], "enviados": [], "iniciado": ahora()})
         self.estado.setdefault("brotes_avisados", [])
         self.casos = {c["reporte_id"]: c for c in cargar_json(CASOS_TODOS, [])}
         self.ultimo_refresco = time.time()
         self.nuevos_total = 0
-        self.repo = RepositorioSupabase()
         print(f"[{ahora()}] Supabase: {'conectado' if self.repo.activo else 'no configurado (solo caché local)'}")
 
     # ---------- clasificación ----------
@@ -200,8 +200,16 @@ class Listener:
         try:
             brotes = self.clf.brotes_de_casos(list(self.casos.values()), reportes_por_id)
             for rid, valor_brote in brotes.items():
-                if rid in self.casos:
-                    self.casos[rid]["brote"] = valor_brote
+                if rid not in self.casos:
+                    continue
+                valor_brote = bool(valor_brote)
+                if bool(self.casos[rid].get("brote")) == valor_brote:
+                    continue
+                self.casos[rid]["brote"] = valor_brote
+                try:
+                    self.repo.actualizar_brote(rid, valor_brote)
+                except Exception as exc:
+                    print(f"[{ahora()}] aviso Supabase (brote {rid}): {exc}")
         except Exception as exc:
             print(f"[{ahora()}] no se pudieron recalcular brotes: {exc}")
 
