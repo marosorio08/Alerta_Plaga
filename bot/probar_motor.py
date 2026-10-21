@@ -324,9 +324,11 @@ def main() -> None:
         revisar("detecta seguimiento por ventana (mismo productor)",
                 res.get("seguimiento_de") == "R-2035", f"-> {res.get('seguimiento_de')}")
         caso_seg = resultados_a_casos([rep_2043], clf_seg)[0]
-        revisar("el seguimiento hereda plaga pero NO lleva semáforo ni técnico ni brote",
-                not caso_seg.get("semaforo") and not caso_seg.get("tecnico_id")
-                and not caso_seg.get("brote"), f"-> {caso_seg}")
+        revisar("el seguimiento calcula semáforo/técnico (el API los ignora si es seguimiento)",
+                bool(caso_seg.get("semaforo")) and bool(caso_seg.get("tecnico_id")),
+                f"-> {caso_seg}")
+        revisar("pero no inventa brote en seguimientos",
+                "brote" not in caso_seg, f"-> {caso_seg.get('brote')}")
     else:
         print("  (se omite: caché sin R-2043/R-2035)")
 

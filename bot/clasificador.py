@@ -841,10 +841,11 @@ def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
             "seguimiento_de": res.get("seguimiento_de"),
         }
 
-        # un seguimiento NO abre caso nuevo: la plaga se hereda pero no lleva
-        # semáforo, técnico ni brote (tabla de puntos de la sección 4 del reto)
-        if (es_plaga and plaga and plaga != "desconocida"
-                and not res.get("seguimiento_de")):
+        # Los campos de Nivel 2 se calculan SIEMPRE que haya plaga conocida:
+        # si el reporte resulta ser seguimiento, la API los ignora (0, nunca -1);
+        # si es caso nuevo, cuentan +3. Suprimirlos por nuestra heurística de
+        # "seguimiento" nos costó puntos (R-2065/R-2066). El API decide.
+        if (es_plaga and plaga and plaga != "desconocida"):
             nivel2 = clasif.resolver_nivel2(r, plaga, res)
             if nivel2:
                 caso["semaforo"] = nivel2["semaforo"]
