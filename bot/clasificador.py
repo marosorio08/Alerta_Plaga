@@ -87,9 +87,15 @@ SENALES_PLAGA: dict[str, dict[str, float]] = {
     },
     "gallina_ciega": {
         "gallina ciega": 3, "nixticuil": 3, "gusano blanco": 3,
-        "raices comidas": 3, "sin raiz": 3, "salen sin raiz": 3,
-        "arrancan facil": 2.5, "se arrancan": 2, "marchita": 1.5,
-        "larvas blancas": 2.5, "acamadas": 2,
+        "gusanos blancos": 3, "gusanos blancos enroscados": 3,
+        "larvas blancas": 3, "larva blanca": 3, "enroscados": 2.5,
+        "enroscadas": 2.5,
+        "raices comidas": 3, "raices estan comidas": 3, "estan comidas": 2.5,
+        "raices mordidas": 3, "sin raiz": 3, "salen sin raiz": 3,
+        "arrancan facil": 2.5, "se arrancan": 2, "acamadas": 2,
+        "se marchita": 2, "planta se marchita": 2.5,
+        "marchita aunque hay humedad": 3, "marchita con humedad": 3,
+        "marchitas": 1.5, "marchit": 1.0,
     },
     "mosquita_blanca": {
         "mosquita blanca": 3, "mosquitas blancas": 3, "mosquilla": 3, "mosquita": 2.5,

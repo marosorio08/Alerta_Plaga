@@ -49,6 +49,10 @@ BITACORA = CACHE / "listener_bitacora.jsonl"    # historial de decisiones
 # Casos dudosos: se revisan con el coordinador antes de registrarlos.
 PENDIENTES_REVISION = CACHE / "revision_pendiente.json"
 CONFIANZA_DUDOSA = float(os.getenv("CONFIANZA_DUDOSA", "0.55"))
+# Interruptor de seguridad: el agente NO envía nada a POST /casos ni avisos
+# hasta que se defina PERMITIR_ENVIOS=1 en su .env. Así se pueden verificar
+# los reportes nuevos sin arriesgar puntos.
+ENVIOS_HABILITADOS = os.getenv("PERMITIR_ENVIOS", "0") == "1"
 
 
 def ahora() -> str:
@@ -79,12 +83,16 @@ class Listener:
         self.clf = Clasificador(self.api, con_ia=True)
         self.intervalo = intervalo
         self.refresco = refresco_min * 60
-        self.enviar = enviar
+        self.enviar = bool(enviar and ENVIOS_HABILITADOS)
         self.preguntas = preguntas
         self.telegram = telegram
         self.vigilante = vigilante
         self.repo = RepositorioSupabase()
-        self.extras = Extras(self.api, seco=not avisos_reales, repo=self.repo) if extras else None
+        self.extras = Extras(
+            self.api,
+            seco=(not avisos_reales or not self.enviar),
+            repo=self.repo,
+        ) if extras else None
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
         self.estado = cargar_json(ESTADO, {"procesados": [], "enviados": [], "iniciado": ahora()})
         self.estado.setdefault("brotes_avisados", [])
@@ -108,6 +116,9 @@ class Listener:
         self.ultimo_refresco = time.time()
         self.nuevos_total = 0
         print(f"[{ahora()}] Supabase: {'conectado' if self.repo.activo else 'no configurado (solo caché local)'}")
+        if enviar and not self.enviar:
+            print(f"[{ahora()}] PAUSA DE ENVÍOS: define PERMITIR_ENVIOS=1 en el .env "
+                  "para registrar casos nuevos y avisos. Por ahora solo se clasifica y guarda en caché.")
 
     # ---------- clasificación ----------
 
