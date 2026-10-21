@@ -35,10 +35,11 @@ PLAZO_HORAS = {"rojo": 24, "naranja": 48, "amarillo": 72, "verde": 168}
 
 
 class Extras:
-    def __init__(self, api, seco: bool = True) -> None:
+    def __init__(self, api, seco: bool = True, repo=None) -> None:
         """seco=True -> imprime lo que haría pero no manda nada a la API."""
         self.api = api
         self.seco = seco
+        self.repo = repo
         self.enviados: list[dict] = []
 
     # ---------------------------------------------------------------- avisos
@@ -52,10 +53,20 @@ class Extras:
         try:
             respuesta = self.api.post("avisos", cuerpo)
             self.enviados.append(cuerpo)
+            self._guardar_aviso(reporte_id, tipo, para, cuerpo["mensaje"])
             return respuesta
         except Exception as exc:
             print(f"  aviso falló ({tipo}): {exc}")
             return None
+
+    def _guardar_aviso(self, reporte_id: str, tipo: str, para, mensaje: str) -> None:
+        if not self.repo:
+            return
+        destinos = para if isinstance(para, list) else [para]
+        try:
+            self.repo.guardar_aviso(reporte_id, tipo, destinos, mensaje)
+        except Exception as exc:
+            print(f"  aviso guardado en BD falló ({tipo}): {exc}")
 
     def avisar_cuarentenaria(self, caso: dict, plaga: dict, parcela: dict) -> None:
         """Plaga cuarentenaria: sanidad vegetal debe saberlo de inmediato."""
@@ -91,7 +102,13 @@ class Extras:
             print(f"  [seco] pregunta a {reporte_id}: {texto[:90]}")
             return {"reporte_id": reporte_id, "texto": texto}
         try:
-            return self.api.post("preguntas", {"reporte_id": reporte_id, "texto": texto[:500]})
+            respuesta = self.api.post("preguntas", {"reporte_id": reporte_id, "texto": texto[:500]})
+            if self.repo:
+                try:
+                    self.repo.guardar_pregunta(reporte_id, texto[:500])
+                except Exception as exc:
+                    print(f"  pregunta guardada en BD falló: {exc}")
+            return respuesta
         except Exception as exc:
             print(f"  pregunta falló: {exc}")
             return None

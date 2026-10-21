@@ -94,6 +94,12 @@ class RepositorioSupabase:
         caso = detalle.get("caso") or {}
         es_plaga = bool(caso.get("es_plaga"))
         plaga = (caso.get("plaga") or "desconocida") if es_plaga else None
+        prioridad = caso.get("prioridad")
+        if prioridad is None:
+            prioridad = detalle.get("prioridad")
+        pct = caso.get("pct")
+        if pct is None:
+            pct = detalle.get("pct")
         fila = {
             "reporte_id": caso.get("reporte_id") or detalle.get("reporte_id"),
             "es_plaga": es_plaga,
@@ -101,8 +107,8 @@ class RepositorioSupabase:
             "urgente": bool(caso.get("urgente")),
             "semaforo": caso.get("semaforo") or detalle.get("semaforo"),
             "tecnico_id": caso.get("tecnico_id") or detalle.get("tecnico_id"),
-            "prioridad": caso.get("prioridad") or detalle.get("prioridad"),
-            "pct": caso.get("pct") or detalle.get("pct"),
+            "prioridad": prioridad,
+            "pct": pct,
             "brote": bool(caso.get("brote") or detalle.get("brote")),
             "confianza": detalle.get("confianza"),
             "motor": detalle.get("motor"),
@@ -113,6 +119,20 @@ class RepositorioSupabase:
             "raw": detalle,
         }
         self._upsert("casos", [fila], "reporte_id")
+
+    def actualizar_brote(self, reporte_id: str, brote: bool) -> None:
+        """Sincroniza el resultado global de brote cuando se recalcula."""
+        if not self.activo:
+            return
+        resp = self.sesion.patch(
+            f"{self.url}/rest/v1/casos",
+            params={"reporte_id": f"eq.{reporte_id}"},
+            json={"brote": bool(brote)},
+            headers={"Prefer": "return=minimal"},
+            timeout=40,
+        )
+        if resp.status_code not in (200, 204):
+            raise RuntimeError(f"Supabase casos PATCH {resp.status_code}: {resp.text[:300]}")
 
     # ---------- envío a la API ----------
 
