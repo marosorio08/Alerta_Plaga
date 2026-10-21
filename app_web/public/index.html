@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Alerta Plaga · Equipo 7_7 · IT Green × DIMA UACh</title>
+  <title>🌿 Alerta Plaga · Equipo 7_7 · IT Green × DIMA UACh</title>
   <meta name="description" content="Dashboard de monitoreo fitosanitario del equipo 7_7 para el hackathon Alerta Plaga (IT Green × DIMA UACh): parcelas, reportes, plagas urgentes y priorización de casos.">
-  <meta name="theme-color" content="#1f7a44">
+  <meta name="theme-color" content="#060b08">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -26,9 +26,11 @@
       </div>
       <div class="brand-text">
         <span class="brand-eyebrow">IT Green × DIMA · UACh</span>
-        <h1>Alerta Plaga <span class="brand-team">7_7</span></h1>
+        <h1>🌱 Alerta Plaga <span class="brand-team">7_7</span></h1>
       </div>
     </div>
+
+    <p class="saludo" id="saludo">Hola 👋</p>
 
     <div class="topbar-meta">
       <div class="live" id="live-indicator" aria-live="polite">
@@ -52,32 +54,32 @@
   <main class="wrap">
     <section class="kpis" aria-label="Indicadores del equipo">
       <article class="kpi kpi--primary">
-        <p class="kpi-label">Puntos</p>
+        <p class="kpi-label">🎯 Puntos</p>
         <p class="kpi-value"><span id="kpi-puntos">—</span><span class="kpi-max" id="kpi-puntos-max"></span></p>
         <div class="meter" aria-hidden="true"><span id="kpi-puntos-bar"></span></div>
         <p class="kpi-foot" id="kpi-puntos-foot">—</p>
       </article>
 
       <article class="kpi">
-        <p class="kpi-label">Lugar</p>
+        <p class="kpi-label">🏆 Lugar</p>
         <p class="kpi-value"><span id="kpi-lugar">—</span></p>
         <p class="kpi-foot" id="kpi-lugar-foot">ranking del hackathon</p>
       </article>
 
       <article class="kpi">
-        <p class="kpi-label">Reportes procesados</p>
+        <p class="kpi-label">📨 Reportes procesados</p>
         <p class="kpi-value"><span id="kpi-reportes">—</span></p>
         <p class="kpi-foot" id="kpi-reportes-foot">—</p>
       </article>
 
       <article class="kpi kpi--danger">
-        <p class="kpi-label">Casos urgentes</p>
+        <p class="kpi-label">🚨 Casos urgentes</p>
         <p class="kpi-value"><span id="kpi-urgentes">—</span></p>
         <p class="kpi-foot" id="kpi-urgentes-foot">—</p>
       </article>
 
       <article class="kpi">
-        <p class="kpi-label">Latencia mediana</p>
+        <p class="kpi-label">⏱️ Latencia mediana</p>
         <p class="kpi-value"><span id="kpi-latencia">—</span><span class="kpi-unit" id="kpi-latencia-unit"></span></p>
         <p class="kpi-foot" id="kpi-latencia-foot">—</p>
       </article>
@@ -87,25 +89,25 @@
       <section class="panel map-panel" aria-labelledby="map-title">
         <header class="panel-head">
           <div>
-            <h2 id="map-title">Mapa de parcelas</h2>
+            <h2 id="map-title">🗺️ Mapa de parcelas</h2>
             <p class="panel-sub" id="map-sub">Región de Texcoco, Estado de México</p>
           </div>
           <div class="map-toggles" id="map-toggles" role="group" aria-label="Filtrar parcelas por estado">
-            <button class="toggle is-on" data-estado="urgente" type="button"><span class="dot dot-urgente"></span>Urgente</button>
-            <button class="toggle is-on" data-estado="plaga" type="button"><span class="dot dot-plaga"></span>Plaga</button>
-            <button class="toggle is-on" data-estado="sin_plaga" type="button"><span class="dot dot-sin_plaga"></span>Sin plaga</button>
-            <button class="toggle is-on" data-estado="sin_clasificar" type="button"><span class="dot dot-sin_clasificar"></span>Sin clasificar</button>
+            <button class="toggle is-on" data-estado="urgente" type="button"><span class="dot dot-urgente"></span>🚨 Urgente</button>
+            <button class="toggle is-on" data-estado="plaga" type="button"><span class="dot dot-plaga"></span>⚠️ Plaga</button>
+            <button class="toggle is-on" data-estado="sin_plaga" type="button"><span class="dot dot-sin_plaga"></span>✅ Sin plaga</button>
+            <button class="toggle is-on" data-estado="sin_clasificar" type="button"><span class="dot dot-sin_clasificar"></span>⏳ Sin clasificar</button>
           </div>
         </header>
         <div class="map-shell">
           <div id="map" class="map" role="application" aria-label="Mapa interactivo de parcelas monitoreadas"></div>
           <div class="map-legend" id="map-legend">
-            <p class="map-legend-title">Estado de la parcela</p>
+            <p class="map-legend-title">🎯 Estado de la parcela</p>
             <ul>
-              <li><span class="dot dot-urgente"></span>Urgente</li>
-              <li><span class="dot dot-plaga"></span>Con plaga</li>
-              <li><span class="dot dot-sin_plaga"></span>Sin plaga</li>
-              <li><span class="dot dot-sin_clasificar"></span>Sin clasificar</li>
+              <li><span class="dot dot-urgente"></span>🚨 Urgente</li>
+              <li><span class="dot dot-plaga"></span>⚠️ Con plaga</li>
+              <li><span class="dot dot-sin_plaga"></span>✅ Sin plaga</li>
+              <li><span class="dot dot-sin_clasificar"></span>⏳ Sin clasificar</li>
             </ul>
             <p class="map-legend-note">Tamaño del punto = superficie (ha)</p>
           </div>
@@ -119,7 +121,7 @@
         <section class="panel" aria-labelledby="estado-title">
           <header class="panel-head">
             <div>
-              <h2 id="estado-title">Estado del monitoreo</h2>
+              <h2 id="estado-title">📊 Estado del monitoreo</h2>
               <p class="panel-sub">Parcelas por situación fitosanitaria</p>
             </div>
           </header>
@@ -140,7 +142,7 @@
         <section class="panel" aria-labelledby="top-title">
           <header class="panel-head">
             <div>
-              <h2 id="top-title">Parcelas con más reportes</h2>
+              <h2 id="top-title">🌾 Parcelas con más reportes</h2>
               <p class="panel-sub">Prioridad de visita en campo</p>
             </div>
           </header>
@@ -152,7 +154,7 @@
         <section class="panel" aria-labelledby="plagas-title">
           <header class="panel-head">
             <div>
-              <h2 id="plagas-title">Plagas más frecuentes</h2>
+              <h2 id="plagas-title">🐛 Plagas más frecuentes</h2>
               <p class="panel-sub" id="plagas-sub">Casos clasificados como plaga</p>
             </div>
           </header>
@@ -162,7 +164,7 @@
         <section class="panel" aria-labelledby="cultivos-title">
           <header class="panel-head">
             <div>
-              <h2 id="cultivos-title">Cultivos afectados</h2>
+              <h2 id="cultivos-title">🌽 Cultivos afectados</h2>
               <p class="panel-sub" id="cultivos-sub">Casos de plaga por cultivo</p>
             </div>
           </header>
@@ -173,7 +175,7 @@
       <section class="panel table-panel" id="monitor" aria-labelledby="casos-title">
         <header class="panel-head panel-head--table">
           <div>
-            <h2 id="casos-title">Monitor de casos</h2>
+            <h2 id="casos-title">📋 Monitor de casos</h2>
             <p class="panel-sub" id="casos-sub">—</p>
           </div>
           <div class="search">
@@ -186,20 +188,20 @@
 
         <div class="filters">
           <div class="segmented" id="filtro-tipo" role="group" aria-label="Filtrar por tipo de reporte">
-            <button class="seg is-on" data-tipo="" type="button">Todos</button>
-            <button class="seg" data-tipo="texto" type="button">Texto</button>
-            <button class="seg" data-tipo="voz" type="button">Voz</button>
-            <button class="seg" data-tipo="foto" type="button">Foto</button>
+            <button class="seg is-on" data-tipo="" type="button">🌐 Todos</button>
+            <button class="seg" data-tipo="texto" type="button">✍️ Texto</button>
+            <button class="seg" data-tipo="voz" type="button">🎙️ Voz</button>
+            <button class="seg" data-tipo="foto" type="button">📷 Foto</button>
           </div>
 
           <label class="field">
             <span class="sr-only">Urgencia</span>
             <select id="filtro-urgencia">
               <option value="">Todas las clasificaciones</option>
-              <option value="urgente">Urgente</option>
-              <option value="plaga">Plaga (no urgente)</option>
-              <option value="sin_plaga">No es plaga</option>
-              <option value="sin_clasificar">Sin clasificar</option>
+              <option value="urgente">🚨 Urgente</option>
+              <option value="plaga">⚠️ Plaga (no urgente)</option>
+              <option value="sin_plaga">✅ No es plaga</option>
+              <option value="sin_clasificar">⏳ Sin clasificar</option>
             </select>
           </label>
 
@@ -208,7 +210,7 @@
             <select id="filtro-cultivo"><option value="">Todos los cultivos</option></select>
           </label>
 
-          <button class="btn btn-link" id="limpiar" type="button">Limpiar filtros</button>
+          <button class="btn btn-link" id="limpiar" type="button">🧹 Limpiar filtros</button>
         </div>
 
         <div class="table-wrap">
@@ -233,7 +235,7 @@
   </main>
 
   <footer class="footer">
-    <p>Equipo <strong>7_7</strong> · Alerta Plaga · IT Green × DIMA, Universidad Autónoma Chapingo</p>
+    <p>🌱 Equipo <strong>7_7</strong> · Alerta Plaga · IT Green × DIMA, Universidad Autónoma Chapingo</p>
     <p class="footer-meta"><span id="footer-fuente">Fuente: API del hackathon</span> · <span id="footer-hora">—</span></p>
   </footer>
 

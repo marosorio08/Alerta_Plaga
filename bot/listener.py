@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from api_cliente import ApiCliente, ApiError  # noqa: E402
 from clasificador import Clasificador, caso_para_api, resultados_a_casos  # noqa: E402
 from extras import Extras  # noqa: E402
+from supabase_repositorio import RepositorioSupabase  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
@@ -83,10 +84,16 @@ class Listener:
         self.casos = {c["reporte_id"]: c for c in cargar_json(CASOS_TODOS, [])}
         self.ultimo_refresco = time.time()
         self.nuevos_total = 0
+        self.repo = RepositorioSupabase()
+        print(f"[{ahora()}] Supabase: {'conectado' if self.repo.activo else 'no configurado (solo caché local)'}")
 
     # ---------- clasificación ----------
 
     def procesar(self, reporte: dict) -> dict:
+        try:
+            self.repo.guardar_reporte(reporte)
+        except Exception as exc:
+            print(f"[{ahora()}] aviso Supabase (reporte {reporte.get('id')}): {exc}")
         try:
             res = self.clf.clasificar_reporte(reporte)
             caso = resultados_a_casos([reporte], self.clf)[0]
@@ -113,6 +120,10 @@ class Listener:
         }
         with BITACORA.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(detalle, ensure_ascii=False) + "\n")
+        try:
+            self.repo.guardar_caso(detalle)
+        except Exception as exc:
+            print(f"[{ahora()}] aviso Supabase (caso {detalle.get('reporte_id')}): {exc}")
         return detalle
 
     # ---------- ciclo ----------
@@ -157,11 +168,19 @@ class Listener:
 
             if self.enviar and caso["reporte_id"] not in self.estado["enviados"]:
                 try:
-                    self.api.registrar_caso(caso_para_api(caso))
+                    respuesta = self.api.registrar_caso(caso_para_api(caso))
                     self.estado["enviados"].append(caso["reporte_id"])
                     print(f"[{ahora()}] registrado en POST /casos: {caso['reporte_id']}")
+                    try:
+                        self.repo.guardar_envio(caso["reporte_id"], caso, "enviado", respuesta=respuesta)
+                    except Exception as exc:
+                        print(f"[{ahora()}] aviso Supabase (envío {caso['reporte_id']}): {exc}")
                 except ApiError as exc:
                     print(f"[{ahora()}] error registrando {caso['reporte_id']}: {exc}")
+                    try:
+                        self.repo.guardar_envio(caso["reporte_id"], caso, "error", error=str(exc))
+                    except Exception as exc2:
+                        print(f"[{ahora()}] aviso Supabase (error {caso['reporte_id']}): {exc2}")
 
             self.acciones_extra(reporte, detalle, caso)
 
@@ -247,6 +266,15 @@ class Listener:
             self.ultimo_refresco = time.time()
             print(f"[{ahora()}] catálogos refrescados ({len(self.clf.plagas)} plagas, "
                   f"{len(self.clf.parcelas)} parcelas)")
+            try:
+                self.repo.sincronizar_catalogos(
+                    self.clf.plagas,
+                    list(self.clf.parcelas.values()),
+                    self.api.get_productores(),
+                    self.api.get_tecnicos(),
+                )
+            except Exception as exc:
+                print(f"[{ahora()}] aviso Supabase (catálogos): {exc}")
         except Exception as exc:
             print(f"[{ahora()}] no se pudo refrescar el catálogo: {exc}")
 
