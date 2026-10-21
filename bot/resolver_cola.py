@@ -9,11 +9,12 @@ brote dudoso) repite EXACTAMENTE el flujo que validamos caso a caso:
      `/casos-previos` de la semana.
   3. Reanálisis: ¿seguimiento? ¿señales de plaga? ¿brote con conjunto completo?
   4. Decisión con el motor (`Clasificador`) y la regla de brote (cluster 24 h).
-  5. SOLO se registra (`POST /casos`) si la decisión tiene respaldo claro por
-     precedente/reglas. Si no se puede resolver de forma confiable, el caso se
-     DEJA en la cola (revisión humana) y se avisa.
-  6. Al resolver, avisa a Telegram: qué se hizo, qué se estimó, el resultado de
-     la API, y la puntuación del equipo + el líder en ese momento.
+
+⚠️ Desde el 21-oct ~13:00 el resolver corre en MODO ANÁLISIS SOLO (por decisión
+de Rafa): **NO envía nada a POST /casos ni a Telegram** — re-analiza cada
+dudoso, deja marca de auditoría y conserva la cola completa para revisión
+humana. Si en el futuro se quiere volver al modo automático, restaurar el
+bloque que registraba y el aviso Telegram en `revisar()`.
 
 Lecciones aprendidas que codifica (MEMORIA_VERIFICACION.md):
   * Texto vago sin señales en MAÍZ: "desconocida" puntúa 2/2 (R-2042/R-2089/R-2096).
@@ -25,9 +26,8 @@ Lecciones aprendidas que codifica (MEMORIA_VERIFICACION.md):
     y dedupe por cluster 24 h (R-2098/R-2101-R-2103).
 
 Uso:
-    python bot/resolver_cola.py --una-vez          # una pasada
-    python bot/resolver_cola.py                    # bucle cada N s
-    python bot/resolver_cola.py --sin-telegram     # solo imprime (seco)
+    python bot/resolver_cola.py --una-vez          # una pasada (análisis)
+    python bot/resolver_cola.py                    # bucle cada N s (análisis)
 """
 
 from __future__ import annotations
@@ -370,42 +370,35 @@ class ResolverCola:
     # ------------------------------------------------------------------ loop
 
     def revisar(self) -> int:
-        """Procesa la cola completa; devuelve cuántos casos dejó resueltos."""
+        """Procesa la cola completa en modo ANÁLISIS (sin enviar).
+
+        Según decisión de Rafa (21-oct ~13:00): el resolver **NO registra nada
+        en POST /casos** — solo re-analiza cada dudoso con el flujo validado,
+        deja una marca de auditoría en la bitácora y **deja el caso en la cola**
+        para revisión humana. Nada se envía automáticamente a la API.
+        """
         cola = _leer_json(PENDIENTES, [])
         if not cola:
             return 0
-        nuevos_resueltos = 0
-        quedan = []
+        analizados = 0
+        # No toca la cola: la conserva completa para que la gente decida.
         for pendiente in cola:
             rid = pendiente.get("reporte_id")
             resumen = self.resolver_uno(pendiente)
-            if resumen.get("envio"):
-                registro = self._registrar(rid, resumen["payload"])
-                resumen["registro"] = registro
-                self._timbrar(rid, resumen)
-                self._telegram_resultado(resumen, registro)
-                nuevos_resueltos += 1
-                continue
-            if resumen.get("estado") == "revision_humana":
-                # no se registra: se queda en la cola para la gente
-                quedan.append(pendiente)
-                print(f"[resolver] {rid} requiere revisión humana: "
-                      f"{resumen.get('justificacion', '—')}")
-                continue
-            # ya_resuelto / error: no re-abrir
-            if resumen.get("estado") == "ya_resuelto":
-                continue
-            quedan.append(pendiente)
-        _guardar_json(PENDIENTES, quedan)
-        return nuevos_resueltos
+            resumen["registro"] = None  # nunca se registra
+            self._timbrar(rid, resumen)
+            decision = resumen.get("estado")
+            print(f"[resolver] {rid}: {decision} — {resumen.get('justificacion', '')[:120]}")
+            analizados += 1
+        return analizados
 
     def correr(self) -> None:
-        print(f"[resolver] activo | cada {self.intervalo}s | telegram={self.telegram}")
+        print(f"[resolver] modo ANÁLISIS | cada {self.intervalo}s | sin envíos")
         while True:
             try:
                 n = self.revisar()
                 if n:
-                    print(f"[resolver] {n} dudoso(s) resuelto(s) en esta pasada")
+                    print(f"[resolver] {n} dudoso(s) analizado(s) en esta pasada")
             except Exception:
                 traceback.print_exc()
             time.sleep(self.intervalo)
@@ -413,15 +406,14 @@ class ResolverCola:
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="Resuelve la cola de dudosos 7_7")
+    parser = argparse.ArgumentParser(description="Analiza la cola de dudosos 7_7 (sin enviar)")
     parser.add_argument("--una-vez", action="store_true", help="Una pasada y sale")
-    parser.add_argument("--sin-telegram", action="store_true", help="Modo seco (imprime)")
     parser.add_argument("--intervalo", type=int, default=90)
     args = parser.parse_args()
-    resolver = ResolverCola(telegram=not args.sin_telegram, intervalo=args.intervalo)
+    resolver = ResolverCola(telegram=False, intervalo=args.intervalo)
     if args.una_vez:
         n = resolver.revisar()
-        print(f"[resolver] dudosos resueltos en esta pasada: {n}")
+        print(f"[resolver] dudosos analizados en esta pasada: {n}")
     else:
         resolver.correr()
 

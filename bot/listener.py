@@ -717,7 +717,7 @@ def main() -> None:
             import threading
             from resolver_cola import ResolverCola
 
-            resolver = ResolverCola(api=listener.api, telegram=args.telegram)
+            resolver = ResolverCola(api=listener.api, telegram=False)
             hilo = threading.Thread(target=resolver.correr, daemon=True, name="resolver-dudosos")
             hilo.start()
             print(f"[{ahora()}] resolver de dudosos activo (hilo {hilo.name})")
