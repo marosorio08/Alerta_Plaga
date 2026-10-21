@@ -54,6 +54,8 @@ python bot/extras.py           # brotes, plazos y cuarentenarias (modo seco)
 ```
 
 Diseño y justificación: [`docs/NIVEL2.md`](docs/NIVEL2.md).
+Historia completa del proyecto (decisiones, incidentes y pendientes):
+[`HISTORIA_DEL_PROYECTO.md`](HISTORIA_DEL_PROYECTO.md).
 
 ## Integrantes
 

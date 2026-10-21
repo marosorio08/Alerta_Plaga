@@ -22,6 +22,8 @@ __pycache__/
 
 # Notas privadas con credenciales (NO subir a GitHub)
 MEMORIA_HACKATHON.md
+# Exportaciones de sesión: pueden contener tokens y contraseñas
+historial/
 
 # Proyectos ajenos al reto alojados en esta carpeta
 curso_github/
