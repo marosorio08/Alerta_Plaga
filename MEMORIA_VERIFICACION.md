@@ -1,4 +1,4 @@
-# 🧠 MEMORIA DE VERIFICACIÓN — Equipo 7_7 (Actualización 21-oct 09:16)
+# 🧠 MEMORIA DE VERIFICACIÓN — Equipo 7_7 (Actualización 21-oct 09:30)
 
 > **Propósito de este archivo:** memoria del historial y **guía operativa** para verificar
 > los casos dudosos. El próximo agente/sesión debe leerlo ANTES de tocar cualquier cosa
@@ -19,7 +19,7 @@
 | Tabla oficial | `GET https://itg.tailf75570.ts.net/tabla.json` |
 | Cierre API | jue 22-oct 23:59 · Defensa viernes 23 |
 
-### Posición en vivo (corte 09:16)
+### Posición en vivo (corte 09:26)
 | # | Equipo | Pts/máx | % | Enviados | Brote | Preguntas | Avisos |
 |---|---|---|---|---|---|---|---|
 | 1 | MISA | 295/314 | 93.9 | 79 | 100 | 4 | 138 |
@@ -101,7 +101,7 @@ El vigilante marca como `ok` los dudosos que ya se registraron (no los vuelve a 
 | Reporte | Motivo | Verificación | Resultado |
 |---|---|---|---|
 | **R-2071** (mosquita blanca) | sin semaforo/tecnico/brote al registrar | respuesta del productor aportó parcela P-092 + "la mitad" (50 %). Semaforo amarillo (invariante al pct 10-75), técnico T-03 (carga 2, entomología, más cercano), brote false (1 caso <5 km) | **Complemento +3 → 5/5** ✅ |
-| **R-2075** (seguimiento tizón) | plaga desconocida en cola | es seguimiento → la API solo califica es_plaga+plaga (máx 2); el probe registró 2/2 | **2/2** ✅ (seguimiento) |
+| **R-2075** (seguimiento tizón) | plaga desconocida en cola | es seguimiento → la API solo califica es_plaga+plaga (máx 2); el probe registró 2/2 | **2/2** ✅ (seguimiento). **Re-verificado 21-oct 09:30:** el 409 dice "todavía le pueden agregar brote/semaforo/tecnico", PERO al enviar el complemento la API responde "Este mensaje no abre un caso nuevo: el semáforo, el técnico y el brote no se califican" (máx 2). El complemento fue inofensivo (0 pts, sin pérdida). |
 | **R-2079** (roya del frijol) | "brote con confianza media" | "chahuixtle" en frijol → roya; **6 casos de roya <5 km en 168 h** → brote TRUE; semaforo amarillo, técnico T-09 | **5/5 automático** ✅ (el fix del conjunto completo lo salvó) |
 | R-2043, R-2070, R-2073 | errores históricos de brote | ver sección 2 | irrecuperables, no repetir |
 
@@ -159,8 +159,8 @@ python bot/estado_despliegue.py
 
 ## 7. Notas para el próximo agente
 
-1. **Todo OK al corte 09:16** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA.
+1. **Todo OK al corte 09:26** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA (se limpió en el servidor el 21-oct 09:26: R-2075 y R-2079 estaban residuales ya marcados `ok`).
 2. El flujo de verificación de la sección 3 es el que se usó para resolver R-2071/R-2075/R-2079 sin fallar.
 3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, dedupe por productor). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
-4. **Complemento**: si la API devuelve "todavía le pueden agregar: brote, semaforo, tecnico_id", esos son puntos recuperables (+3) si calculamos bien los campos con los datos que aporta el productor (respuestas `-R` dan parcela/pct).
+4. **⚠️ NUEVO 21-oct 09:30 — El mensaje "todavía le pueden agregar..." del 409 NO es garantía de +3 en seguimientos.** En R-2075 la API anunció que faltaban brote/semaforo/tecnico, pero al enviar el complemento respondió "no abre un caso nuevo: no se califican" (máx 2, puntos 0). **El complemento solo suma si el reporte ABRE un caso nuevo** (R-2071 = caso nuevo → +3). Regla práctica: complementar solo cuando el reporte NO es seguimiento (usa la llama 409 → si el 409 de `validar_caso` o el POST devuelve esa frase, complementar es inofensivo pero no suma).
 5. El repo: `marosorio08/Alerta_Plaga_Gusano` (privado). PRs 1-5 fusionados. La rama de Emmanuel (Caso_Emmanuel) quedó 33 commits atrás de main: necesita `git pull origin main` antes de cualquier PR nuevo (ya avisado por Telegram).
