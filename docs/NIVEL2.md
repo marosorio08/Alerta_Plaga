@@ -99,13 +99,33 @@ Se interpreta del mensaje, como haría un técnico:
 | "una quinta parte" | 20 |
 | no lo dice | **10** (mismo criterio que `/casos-previos`) |
 
+### 3.5 Brote (sección 9 del reglamento)
+
+Hay **brote** si, contando el caso actual, hay **3 o más casos de la misma plaga**
+cuyas parcelas están a **menos de 5 km** y que llegaron en los **últimos 7 días
+(168 h, incluido el momento del mensaje)**.
+
+| Aspecto | Decisión |
+|---|---|
+| ¿Qué cuenta? | Los previos (`GET /casos-previos`) + los casos propios |
+| ¿Qué no cuenta? | Seguimientos, mensajes que no son reportes, `desconocida` |
+| ¿Qué hora? | La `recibido` del mensaje, no la de procesamiento |
+| ¿Distancia? | Haversine entre parcelas, R = 6371 km, **estrictamente < 5 km** |
+| Sin coordenadas | No se manda el campo → vale 0, nunca resta |
+
+**Detalle de la ventana:** solo cuentan los casos **recibidos antes o a la vez**
+que el mensaje. Un caso que llega después no hace "brote retroactivo" para los
+anteriores; por eso la regla se evalúa sobre el conjunto completo y no reporte
+por reporte. La regla da **40/40** contra la respuesta oficial de `/casos-previos`.
+
 ---
 
 ## 4. Verificación (lo que se puede mostrar el viernes)
 
 ```bash
 python bot/validar_nivel2.py    # fórmulas reales contra 40 casos con respuesta correcta
-python bot/probar_motor.py      # 49 pruebas sin gastar API
+python bot/validar_brote.py     # regla de brote contra los 40 casos previos
+python bot/probar_motor.py      # 58 pruebas sin gastar API
 ```
 
 Resultado actual:
@@ -113,7 +133,8 @@ Resultado actual:
 ```
 Casos previos: 40
 Prioridad: 40/40   Semáforo: 40/40   Técnico: 40/40
-Pruebas: 49 | fallos: 0
+Brote: 40/40
+Pruebas: 58 | fallos: 0
 ```
 
 El caso del reglamento también coincide: maíz 4.5 ha, V8, cogollero, 50 % →

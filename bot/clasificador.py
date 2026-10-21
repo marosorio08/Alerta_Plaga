@@ -26,7 +26,8 @@ from collections import Counter
 from pathlib import Path
 
 from api_cliente import ApiCliente
-from nivel2 import resolver as resolver_nivel2
+from nivel2 import contar_casos_cercanos, resolver as resolver_nivel2
+from nivel2 import MINIMO_CASOS_BROTE  # noqa: E402 (mismo módulo, import explícito)
 
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
@@ -139,6 +140,17 @@ CULTIVO_POR_MENCION = {
 def cargar_catalogo(nombre: str) -> list:
     archivo = CACHE / f"{nombre}.json"
     return json.loads(archivo.read_text(encoding="utf-8"))
+
+
+def cargar_previos() -> list:
+    """Casos de la semana pasada con respuesta correcta (GET /casos-previos)."""
+    archivo = CACHE / "cache_casos_previos.json"
+    if not archivo.exists():
+        return []
+    try:
+        return json.loads(archivo.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
 
 
 class Clasificador:
@@ -435,6 +447,60 @@ class Clasificador:
         datos["detalle_nivel2"] = n2.detalle
         return datos
 
+    # ---------- 9. Brote (regla global, sin IA) ----------
+    def brotes_de_casos(self, casos: list[dict], reportes_por_id: dict,
+                        previos: list | None = None) -> dict[str, bool]:
+        """Evalúa la regla de brote para cada caso y devuelve {reporte_id: bool}.
+
+        Regla (sección 9 del reto): hay brote si, contando el caso actual, hay
+        3+ casos de la misma plaga a menos de 5 km recibidos en los últimos
+        7 días (168 h, incluido el momento del mensaje). Cuentan los casos de
+        GET /casos-previos y los casos propios encontrados por el sistema.
+        No cuentan los seguimientos, los mensajes que no son reportes ni los
+        que quedaron como "desconocida". La hora es la `recibido` del mensaje.
+
+        Si un caso no tiene parcela con coordenadas o plaga aclarada, queda
+        fuera del resultado (no se manda el campo, no se califica).
+        """
+        if previos is None:
+            previos = cargar_previos()
+        referencias: list[dict] = [
+            {"plaga": p["plaga"], "lat": p["lat"], "lon": p["lon"],
+             "recibido": p.get("recibido")}
+            for p in previos
+            if p.get("plaga") and p.get("plaga") != "desconocida"
+            and p.get("lat") is not None and p.get("lon") is not None
+        ]
+
+        elegibles: list[dict] = []
+        for c in casos:
+            if not (c.get("es_plaga") and c.get("plaga")
+                    and c.get("plaga") != "desconocida"):
+                continue
+            if c.get("seguimiento_de"):
+                continue  # los seguimientos no cuentan para el brote
+            r = reportes_por_id.get(c["reporte_id"]) or {}
+            if r.get("respuesta_a"):
+                continue
+            parcela = self.parcelas.get(r.get("parcela_id") or "")
+            if not parcela:
+                continue
+            try:
+                lat, lon = float(parcela["lat"]), float(parcela["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            referencia = {"plaga": c["plaga"], "lat": lat, "lon": lon,
+                          "recibido": r.get("recibido")}
+            referencias.append(referencia)
+            elegibles.append({"rid": c["reporte_id"], **referencia})
+
+        resultado: dict[str, bool] = {}
+        for e in elegibles:
+            n = contar_casos_cercanos(e["plaga"], e["lat"], e["lon"],
+                                      e["recibido"], referencias)
+            resultado[e["rid"]] = n >= MINIMO_CASOS_BROTE
+        return resultado
+
     # ---------- 2.7 seguimientos (respuesta_a) ----------
     def _reporte_padre(self, reporte: dict) -> dict | None:
         """Devuelve el reporte al que éste responde, si existe."""
@@ -591,6 +657,7 @@ def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
             "reporte_id": r["id"],
             "es_plaga": es_plaga,
             "plaga": plaga,
+            "seguimiento_de": res.get("seguimiento_de"),
         }
 
         if es_plaga and plaga and plaga != "desconocida":
@@ -605,11 +672,22 @@ def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
         # compatibilidad con el dashboard (el campo urgente ya no se califica)
         caso["urgente"] = caso.get("semaforo") in ("rojo", "naranja")
         casos.append(caso)
+
+    # Brote: regla global (previos + casos propios), se decide con el conjunto
+    # completo para no depender del orden en que llegaron los reportes.
+    try:
+        brotes = clasif.brotes_de_casos(casos, {r["id"]: r for r in reportes})
+    except Exception:
+        brotes = {}
+    for c in casos:
+        if c["reporte_id"] in brotes:
+            c["brote"] = brotes[c["reporte_id"]]
     return casos
 
 
 # campos que acepta POST /casos; el resto es información local
-CAMPOS_API = ("reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id", "prioridad", "caso")
+CAMPOS_API = ("reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id",
+              "prioridad", "brote", "caso")
 
 
 def caso_para_api(caso: dict) -> dict:

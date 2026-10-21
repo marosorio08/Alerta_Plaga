@@ -164,6 +164,17 @@ class Listener:
         if self.extras:
             self.revisar_brotes()
 
+        # El brote es una regla global: se recalcula con previos + todos los
+        # casos propios (el orden de llegada no puede sesgar el resultado).
+        try:
+            brotes = self.clf.brotes_de_casos(list(self.casos.values()),
+                                              {r["id"]: r for r in reportes})
+            for rid, valor_brote in brotes.items():
+                if rid in self.casos:
+                    self.casos[rid]["brote"] = valor_brote
+        except Exception as exc:
+            print(f"[{ahora()}] no se pudieron recalcular brotes: {exc}")
+
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
         return len(pendientes)

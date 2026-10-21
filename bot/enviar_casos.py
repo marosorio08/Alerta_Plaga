@@ -65,14 +65,17 @@ def main() -> None:
     n_urg = sum(1 for c in casos if c.get("urgente"))
     con_sem = sum(1 for c in casos if c.get("semaforo"))
     con_tec = sum(1 for c in casos if c.get("tecnico_id"))
+    con_brote = sum(1 for c in casos if c.get("brote") is True)
     print(f"  plaga identificada={n_plaga - n_des} | desconocida={n_des} | no_plaga={n_noplaga}")
-    print(f"  con semáforo={con_sem} | con técnico={con_tec} | rojo/naranja={n_urg}")
+    print(f"  con semáforo={con_sem} | con técnico={con_tec} | rojo/naranja={n_urg}"
+          f" | brote={con_brote}")
 
     if not args.enviar:
         print("\n[DRY-RUN] No se registró nada. Agrega --enviar para registrar.")
         for c in casos:
             print(f"  {c['reporte_id']} es_plaga={c['es_plaga']} plaga={c['plaga']} "
-                  f"sem={c.get('semaforo')} tec={c.get('tecnico_id')} pri={c.get('prioridad')}")
+                  f"sem={c.get('semaforo')} tec={c.get('tecnico_id')} pri={c.get('prioridad')} "
+                  f"brote={c.get('brote')}")
         return
 
     # 3) confirmación
