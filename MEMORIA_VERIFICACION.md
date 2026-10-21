@@ -19,16 +19,16 @@
 | Tabla oficial | `GET https://itg.tailf75570.ts.net/tabla.json` |
 | Cierre API | jue 22-oct 23:59 · Defensa viernes 23 |
 
-### Posición en vivo (corte 09:26)
+### Posición en vivo (corte 10:07)
 | # | Equipo | Pts/máx | % | Enviados | Brote | Preguntas | Avisos |
 |---|---|---|---|---|---|---|---|
-| 1 | MISA | 295/314 | 93.9 | 79 | 100 | 4 | 138 |
-| **2** | **7_7** | **292/314** | **93.0** | **79/79** | 93 | **10** | 131 |
-| 3 | string | 277/314 | 88.2 | 79 | 86 | 7 | 49 |
-| 4 | xD | 241/314 | 76.8 | 79 | null | 0 | 5 |
+| 1 | MISA | 322/341 | 94.4 | 86/86 | 100 | 4 | 138 |
+| **2** | **7_7** | **316/341** | **92.7** | **86/86** | 92 | **13** | 133 |
+| 3 | string | 290/341 | 85.0 | 84/86 | 87 | 7 | 49 |
 
-**Resumen:** 2.º lugar, **3 pts** de diferencia con MISA. **79/79 publicados → 79/79 enviados (al día).**
-Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 96 · tecnico 100 · **brote 93**.
+**Resumen:** 2.º lugar, **6 pts** de diferencia con MISA. **86/86 publicados → enviados (al día).**
+Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 97 · tecnico 98 · **brote 92**.
+Errores (9): 7 históricos + R-2082 técnico + R-2084 brote (ambos fijados por la API, irrecuperables).
 
 ---
 
