@@ -159,6 +159,8 @@ python bot/estado_despliegue.py
 
 ## 7. Notas para el próximo agente
 
+0. **⚠️ REGLA DE ORO DE LA SESIÓN (21-oct 10:30): NUNCA registrar a ciegas en dudosos.** Para cualquier caso en `revision_pendiente.json` o aviso del vigilante: usar **SOLO `POST /casos/validar`** (devuelve estado/agregables **sin registrar nunca**) y **presentar el payload propuesto a Rafa en el chat antes de cualquier `POST /casos` real**. El `POST /casos` en un reporte NO registrado responde **201 y registra en ese momento** (error cometido en R-2088/R-2089: se registraron durante un "probe" — ambos salieron bien, pero la regla es mostrar primero). Excepción: el listener automático sigue enviando lo que ya valida solo (flujo de 3 fases + brote con conjunto completo).
+
 1. **Todo OK al corte 09:26** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA (se limpió en el servidor el 21-oct 09:26: R-2075 y R-2079 estaban residuales ya marcados `ok`).
 2. El flujo de verificación de la sección 3 es el que se usó para resolver R-2071/R-2075/R-2079 sin fallar.
 3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, dedupe por productor). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
