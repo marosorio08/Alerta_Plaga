@@ -219,11 +219,97 @@ def main() -> None:
 
     caso_interno = {"reporte_id": "R-X", "es_plaga": True, "plaga": "pulgon",
                     "semaforo": "amarillo", "tecnico_id": "T-01", "prioridad": 50,
+                    "brote": True,
                     "urgente": False, "_pct": 30, "_nivel2": "detalle"}
     limpio = caso_para_api(caso_interno)
     revisar("descarta claves internas", "_pct" not in limpio and "_nivel2" not in limpio)
     revisar("conserva los campos calificables",
-            {"reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id", "prioridad"} <= set(limpio))
+            {"reporte_id", "es_plaga", "plaga", "semaforo", "tecnico_id",
+             "prioridad", "brote"} <= set(limpio))
+
+    print("\n[15] Nivel 2 — brote (regla de la sección 9)")
+    from nivel2 import contar_casos_cercanos, es_brote, MINIMO_CASOS_BROTE
+
+    base = "2026-10-19T10:00:00-06:00"
+    solitario = [{"plaga": "chapulin", "lat": 19.50, "lon": -98.88, "recibido": base}]
+    n = contar_casos_cercanos("chapulin", 19.50, -98.88, base, solitario)
+    revisar("un solo caso no es brote", n < MINIMO_CASOS_BROTE, f"-> n={n}")
+
+    tres_cercanos = [
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-13T10:00:00-06:00"},
+        {"plaga": "chapulin", "lat": 19.501, "lon": -98.879,
+         "recibido": "2026-10-15T10:00:00-06:00"},
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88, "recibido": base},
+    ]
+    n = contar_casos_cercanos("chapulin", 19.50, -98.88, base, tres_cercanos)
+    revisar("tres casos cercanos en 7 días = brote", n >= MINIMO_CASOS_BROTE, f"-> n={n}")
+
+    lejos = [
+        {"plaga": "chapulin", "lat": 19.90, "lon": -99.10, "recibido": base},
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-14T10:00:00-06:00"},
+        {"plaga": "chapulin", "lat": 19.501, "lon": -98.879,
+         "recibido": "2026-10-16T10:00:00-06:00"},
+    ]
+    n = contar_casos_cercanos("chapulin", 19.50, -98.88, base, lejos)
+    revisar("a más de 5 km no cuenta", n < MINIMO_CASOS_BROTE, f"-> n={n}")
+
+    fuera_de_ventana = [
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-09T10:00:00-06:00"},
+        {"plaga": "chapulin", "lat": 19.501, "lon": -98.879,
+         "recibido": "2026-10-10T10:00:00-06:00"},
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88, "recibido": base},
+    ]
+    n = contar_casos_cercanos("chapulin", 19.50, -98.88, base, fuera_de_ventana)
+    revisar("fuera de los 7 días no cuenta", n < MINIMO_CASOS_BROTE, f"-> n={n}")
+
+    otra_plaga = [
+        {"plaga": "pulgon", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-14T10:00:00-06:00"},
+        {"plaga": "pulgon", "lat": 19.501, "lon": -98.879,
+         "recibido": "2026-10-15T10:00:00-06:00"},
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88, "recibido": base},
+    ]
+    n = contar_casos_cercanos("chapulin", 19.50, -98.88, base, otra_plaga)
+    revisar("distinta plaga no cuenta", n < MINIMO_CASOS_BROTE, f"-> n={n}")
+
+    revisar("es_brote usa el mínimo oficial",
+            es_brote("chapulin", 19.50, -98.88, base, tres_cercanos))
+
+    # Integración: 3 casos propios de la misma zona. La regla cuenta solo los
+    # recibidos ANTES del mensaje (y al propio): el último de la cadena es brote.
+    rep_brote = [
+        {"id": "R-B1", "tipo": "texto", "parcela_id": "P-203",
+         "recibido": "2026-10-12T10:00:00-06:00",
+         "texto": "Adentro del cogollo hay gusanos verdes y aserrín",
+         "audio_url": None, "foto_url": None, "respuesta_a": None},
+        {"id": "R-B2", "tipo": "texto", "parcela_id": "P-203",
+         "recibido": "2026-10-14T10:00:00-06:00",
+         "texto": "Gusano cogollero en el maíz también, aserrín en el cogollo",
+         "audio_url": None, "foto_url": None, "respuesta_a": None},
+        {"id": "R-B3", "tipo": "texto", "parcela_id": "P-203",
+         "recibido": "2026-10-19T10:00:00-06:00",
+         "texto": "Otra vez cogollero, gusanos verdes en el cogollo",
+         "audio_url": None, "foto_url": None, "respuesta_a": None},
+    ]
+    casos_b = resultados_a_casos(rep_brote, crear_clasificador())
+    brotes_b = {c["reporte_id"]: bool(c.get("brote")) for c in casos_b}
+    revisar("el último caso ve a los dos previos -> brote=True",
+            brotes_b.get("R-B3") is True, f"-> {brotes_b}")
+    revisar("los primeros no ven casos posteriores -> brote=False",
+            brotes_b.get("R-B1") is False and brotes_b.get("R-B2") is False,
+            f"-> {brotes_b}")
+
+    # Un caso sin parcela (sin coordenadas) no inventa brote
+    rep_sin = {"id": "R-BX", "tipo": "texto", "parcela_id": None,
+               "recibido": "2026-10-19T10:00:00-06:00",
+               "texto": "Adentro del cogollo hay gusanos verdes y aserrín",
+               "audio_url": None, "foto_url": None, "respuesta_a": None}
+    caso_sin = resultados_a_casos([rep_sin], crear_clasificador())[0]
+    revisar("sin parcela no se manda brote (no califica)",
+            "brote" not in caso_sin, f"-> {caso_sin.get('brote')}")
 
     print("\n[10] Robustez ante catálogo cambiado por los organizadores")
     clf_nuevo = crear_clasificador()

@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 SEVERIDAD_PUNTOS = {"baja": 15, "media": 25, "alta": 40, "critica": 50, "crítica": 50}
 CARGA_MAXIMA = 5
@@ -225,3 +226,72 @@ def resolver(plaga: dict, parcela: dict, texto: str | None, tecnicos: list[dict]
                f"prioridad={prioridad} ({semaforo}) · tecnico={tecnico}")
     return ResultadoNivel2(pct=pct, prioridad=prioridad, semaforo=semaforo,
                            tecnico_id=tecnico, detalle=detalle)
+
+
+# ---------------------------------------------------------------- brote
+
+# Regla de la sección 9 del reto: 3+ casos (contando el actual) de la misma
+# plaga, a menos de 5 km, recibidos en los últimos 7 días (168 h).
+RADIO_BROTE_KM = 5.0
+VENTANA_BROTE_HORAS = 168
+MINIMO_CASOS_BROTE = 3
+# La hora oficial del reto es la del centro de México (UTC-6).
+ZONA_HORARIA_RETO = timezone(timedelta(hours=-6))
+
+
+def _a_datetime(valor) -> datetime | None:
+    """Devuelve un datetime con zona horaria (acepta ISO 8601 o datetime)."""
+    if isinstance(valor, datetime):
+        return valor if valor.tzinfo else valor.replace(tzinfo=ZONA_HORARIA_RETO)
+    if not isinstance(valor, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        # Sin zona: se asume la hora del reto (UTC-6), como /casos-previos.
+        dt = dt.replace(tzinfo=ZONA_HORARIA_RETO)
+    return dt
+
+
+def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict],
+                          radio_km: float = RADIO_BROTE_KM,
+                          ventana_horas: float = VENTANA_BROTE_HORAS) -> int:
+    """Cuenta los casos de la misma plaga a menos de `radio_km` que llegaron
+    entre `recibido - ventana_horas` y `recibido` (inclusive).
+
+    `referencias` es una lista de dicts con ``plaga``, ``lat``, ``lon`` y
+    ``recibido``. Si el propio caso está en la lista (distancia 0, misma
+    hora), se cuenta a sí mismo, tal como pide el reglamento.
+    """
+    t_ref = _a_datetime(recibido)
+    if t_ref is None or lat is None or lon is None:
+        return 0
+    limite = t_ref - timedelta(hours=ventana_horas)
+    total = 0
+    for ref in referencias:
+        if ref.get("plaga") != plaga:
+            continue
+        try:
+            rlat, rlon = float(ref["lat"]), float(ref["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        try:
+            if distancia_km(float(lat), float(lon), rlat, rlon) >= radio_km:
+                continue
+        except (TypeError, ValueError):
+            continue
+        t_otro = _a_datetime(ref.get("recibido"))
+        if t_otro is None:
+            continue
+        if limite <= t_otro <= t_ref:
+            total += 1
+    return total
+
+
+def es_brote(plaga: str, lat, lon, recibido, referencias: list[dict],
+             minimo: int = MINIMO_CASOS_BROTE, **otras) -> bool:
+    """Verdadero si hay al menos `minimo` casos (contando este) de la misma
+    plaga a menos de 5 km en los últimos 7 días."""
+    return contar_casos_cercanos(plaga, lat, lon, recibido, referencias, **otras) >= minimo
