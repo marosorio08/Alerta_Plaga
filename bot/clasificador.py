@@ -173,11 +173,14 @@ class Clasificador:
         self._visitas: set[str] | None = None
 
     def recargar_catalogo(self) -> None:
-        """Vuelve a bajar /plagas y /parcelas de la API.
+        """Vuelve a bajar /plagas, /parcelas, /casos-previos y /visitas.
 
         Si los organizadores agregan plagas, cultivos o cambian severidades,
-        el motor los adopta sin reiniciarse ni tocar código.
+        el motor los adopta sin reiniciarse ni tocar código. Los casos previos
+        alimentan el desempate histórico y el brote; las visitas permiten
+        distinguir un seguimiento real de un caso nuevo.
         """
+        CACHE.mkdir(parents=True, exist_ok=True)
         plagas = self.api.get_plagas()
         parcelas = self.api.get_parcelas()
         if plagas:
@@ -188,6 +191,26 @@ class Clasificador:
             (CACHE / "parcelas.json").write_text(
                 json.dumps(parcelas, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+
+        try:
+            previos = self.api.get_casos_previos()
+            (CACHE / "cache_casos_previos.json").write_text(
+                json.dumps(previos, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._historial = None
+        except Exception as exc:
+            print(f"[catalogo] no se pudieron actualizar los casos previos: {exc}")
+
+        try:
+            visitas = self.api.get_visitas()
+            (CACHE / "visitas.json").write_text(
+                json.dumps(visitas, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._visitas = {str(v.get("reporte_id")) for v in visitas if v.get("reporte_id")}
+        except Exception as exc:
+            print(f"[catalogo] no se pudieron actualizar las visitas: {exc}")
+
+        self._tecnicos_cache.clear()
 
     # ---------- herramientas de texto ----------
     @staticmethod
@@ -587,10 +610,11 @@ class Clasificador:
         que quedaron como "desconocida". La hora es la `recibido` del mensaje.
 
         Refinamiento anti-falso-brote: los casos PROPIOS de un mismo productor
-        (posibles mensajes de seguimiento del mismo problema) cuentan UNA vez
-        por productor dentro del brote (caso real R-2043: un productor reportó
-        3 veces en pocas horas y nuestros 3 casos propios disparaban un brote
-        que la API rechazó). Los /casos-previos nunca se deduplican.
+        que sean seguimientos reales ya quedan excluidos por ``seguimiento_de``
+        (mismo productor/parcela <24 h sin visita) o por ``respuesta_a``. La
+        regla oficial NO deduplica por productor: dos casos legítimos del mismo
+        productor en parcelas distintas deben contar los dos. El parámetro
+        ``dedupe_productor_propios`` se conserva solo para pruebas históricas.
 
         Si un caso no tiene parcela con coordenadas o plaga aclarada, queda
         fuera del resultado (no se manda el campo, no se califica).
@@ -632,7 +656,7 @@ class Clasificador:
         for e in elegibles:
             n = contar_casos_cercanos(e["plaga"], e["lat"], e["lon"],
                                       e["recibido"], referencias,
-                                      dedupe_productor_propios=True)
+                                      dedupe_productor_propios=False)
             resultado[e["rid"]] = n >= MINIMO_CASOS_BROTE
         return resultado
 
