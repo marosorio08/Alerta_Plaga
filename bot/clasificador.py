@@ -519,6 +519,29 @@ class Clasificador:
                 resultado["motor"] = "respuesta+padre"
                 resultado["razon"] = f"hereda {plaga_conocida} del caso original"
 
+        # Fallback determinista (regla de cultivo exclusivo): si el catálogo
+        # solo permite UNA plaga para el cultivo y el mensaje no la identificó,
+        # esa es la única respuesta posible (limón→HLB, grano→gorgojo,
+        # papa→tizón, trigo→pulgón). Se aplica DESPUÉS de transcribir/ver para
+        # no perder el porcentaje que menciona el productor (el semáforo
+        # depende de él: R-2122 dijo "75%").
+        if (not resultado.get("es_plaga")
+                or resultado.get("plaga") in (None, "desconocida")):
+            if cultivo:
+                compatibles = self.cultivares_compatibles(cultivo)
+                if len(compatibles) == 1 and tipo in ("voz", "foto"):
+                    unica = next(iter(compatibles))
+                    resultado = dict(resultado)
+                    resultado.update({
+                        "es_plaga": True,
+                        "plaga": unica,
+                        "confianza": 0.6,
+                        "motor": "cultivo_exclusivo",
+                        "razon": f"parcela de {cultivo}, único candidato {unica}",
+                    })
+                    if not resultado.get("texto"):
+                        resultado["texto"] = texto or ""
+
         # 2.7 seguimientos: si responde a otro reporte, o hay un caso abierto
         # del mismo productor/parcela hace <24 h sin visita, se usa como contexto
         padre = self._reporte_padre(reporte)
@@ -866,14 +889,6 @@ class Clasificador:
 
     def _motor_multimedia(self, tipo, texto, audio, foto, cultivo, etapa="", rid=None) -> dict:
         """Usa transcripción/visión (caché primero) y valida contra el cultivo."""
-        # Reglas de cultivo exclusivo (deterministas, alta señal):
-        # limón -> solo hlb ; grano almacenado -> solo gorgojo_khapra
-        cultivo_exclusivo = {"limón": "hlb", "grano almacenado": "gorgojo_khapra"}
-        if cultivo in cultivo_exclusivo and (foto or audio):
-            return {"es_plaga": True, "plaga": cultivo_exclusivo[cultivo],
-                    "confianza": 0.6, "motor": "cultivo_exclusivo",
-                    "razon": f"parcela de {cultivo}, único candidato {cultivo_exclusivo[cultivo]}"}
-
         res = self._multimedia(rid, tipo, audio, foto, cultivo, etapa)
         fuente = res.get("fuente")
 
