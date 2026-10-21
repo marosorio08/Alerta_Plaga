@@ -127,6 +127,10 @@ class Listener:
         procesados = set(self.estado["procesados"])
         pendientes = [r for r in reportes if r["id"] not in procesados]
         if not pendientes:
+            # Sin reportes nuevos igual se refresca el brote en la caché
+            # compartida (los casos previos pudieron cambiar al reprocesar).
+            self._recalcular_brotes({r["id"]: r for r in reportes})
+            self._guardar()
             return 0
 
         for reporte in pendientes:
@@ -166,18 +170,23 @@ class Listener:
 
         # El brote es una regla global: se recalcula con previos + todos los
         # casos propios (el orden de llegada no puede sesgar el resultado).
+        self._recalcular_brotes({r["id"]: r for r in reportes})
+        self._guardar()
+        return len(pendientes)
+
+    def _recalcular_brotes(self, reportes_por_id: dict) -> None:
+        """Reaplica la regla de brote sobre el conjunto completo de casos."""
         try:
-            brotes = self.clf.brotes_de_casos(list(self.casos.values()),
-                                              {r["id"]: r for r in reportes})
+            brotes = self.clf.brotes_de_casos(list(self.casos.values()), reportes_por_id)
             for rid, valor_brote in brotes.items():
                 if rid in self.casos:
                     self.casos[rid]["brote"] = valor_brote
         except Exception as exc:
             print(f"[{ahora()}] no se pudieron recalcular brotes: {exc}")
 
+    def _guardar(self) -> None:
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
-        return len(pendientes)
 
     def acciones_extra(self, reporte: dict, detalle: dict, caso: dict) -> None:
         """Telegram, avisos y preguntas para un caso recién procesado."""
