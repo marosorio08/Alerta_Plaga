@@ -160,8 +160,15 @@ class Clasificador:
         self.parcelas = {p["id"]: p for p in cargar_catalogo("parcelas")}
         self.plagas = cargar_catalogo("plagas")
         self.con_ia = con_ia and bool(os.getenv("OPENROUTER_API_KEY"))
-        self.ia_texto = self.con_ia and os.getenv("INTERPRETAR_IA", "0") == "1"
+        # Modos de INTERPRETAR_IA:
+        #   "0" = solo reglas deterministas (autoridad tradicional)
+        #   "1" = IA primero con respaldo a reglas
+        #   "2" = CONSENSO HÍBRIDO: reglas+IA; si difieren, precedente histórico;
+        #         sin precedente, mandan SIEMPRE las reglas (récord 40/40).
+        self.modo_ia = os.getenv("INTERPRETAR_IA", "0") if self.con_ia else "0"
+        self.ia_texto = self.modo_ia in ("1", "2")
         self._interpretador = None
+        self._historial: dict | None = None
         self._tecnicos_cache: dict[str, list] = {}
         self._visitas: set[str] | None = None
 
@@ -228,9 +235,8 @@ class Clasificador:
     def _interpretar_con_ia(self, texto: str | None, cultivo: str | None) -> dict | None:
         """Interpreta el mensaje con la IA (OpenRouter, JSON estricto).
 
-        Solo se usa si INTERPRETAR_IA=1 (viene del flujo oficial del reto).
-        Si no hay API, timeout o JSON inválido, devuelve None y el llamador
-        usa las reglas deterministas (nunca se arriesga un punto por un fallo).
+        Se usa cuando INTERPRETAR_IA está en ("1","2"). Si no hay API, timeout
+        o JSON inválido, devuelve None y el llamador usa las reglas.
         """
         if not self.ia_texto or not texto:
             return None
@@ -249,6 +255,91 @@ class Clasificador:
         except Exception as exc:
             print(f"[ia_texto] falló, uso reglas: {exc}")
             return None
+
+    # ---------- CONSENSO HÍBRIDO (INTERPRETAR_IA=2) ----------
+    def _historial_resuelto(self) -> dict:
+        """Historial de casos resueltos: por parcela y por cultivo (previos)."""
+        if self._historial is None:
+            por_parcela: dict[str, dict] = {}
+            por_cultivo: dict[str, Counter] = {}
+            try:
+                for p in cargar_previos():
+                    pp = p.get("parcela_id")
+                    pl = p.get("plaga")
+                    if pp and pl and pl != "desconocida" and pp not in por_parcela:
+                        por_parcela[pp] = p
+                    cc = p.get("cultivo")
+                    if cc and pl and pl != "desconocida":
+                        por_cultivo.setdefault(cc, Counter())[pl] += 1
+            except Exception as exc:
+                print(f"[historial] no disponible: {exc}")
+            self._historial = {"por_parcela": por_parcela, "por_cultivo": por_cultivo}
+        return self._historial
+
+    def _desempatar_por_historial(self, parcela_id: str | None, cultivo: str | None,
+                                  candidatas: set | None) -> str | None:
+        """Precedente histórico: parcela ya resuelta o cultivo 100 % consistente."""
+        hist = self._historial_resuelto()
+        if parcela_id:
+            previo = hist["por_parcela"].get(parcela_id)
+            if previo and previo.get("plaga") in (candidatas or {previo.get("plaga")}):
+                return previo["plaga"]
+        if cultivo:
+            cont = hist["por_cultivo"].get(cultivo)
+            if cont:
+                total = sum(cont.values())
+                mejor, n = cont.most_common(1)[0]
+                if total >= 2 and n == total and mejor in (candidatas or {mejor}):
+                    return mejor
+        return None
+
+    def clasificar_texto_hibrido(self, texto: str | None, cultivo: str | None,
+                                 parcela_id: str | None = None) -> dict:
+        """Consenso Híbrido con Desempate Histórico (INTERPRETAR_IA=2).
+
+        1. Ambas pasan por el mensaje: reglas (deterministas) e IA (JSON estricto).
+        2. Si coinciden -> se envía esa clasificación (confianza alta).
+        3. Si difieren -> precedente histórico (parcela resuelta o cultivo 100 %
+           consistente en /casos-previos); si existe, manda ese.
+        4. Sin precedente -> mandan SIEMPRE las Reglas (récord validado 40/40);
+           la IA NUNCA anula a las Reglas sin respaldo histórico.
+        """
+        reglas = self.clasificar_texto(texto, cultivo)
+        if self.modo_ia != "2":
+            if self.modo_ia == "1":
+                return self._interpretar_con_ia(texto, cultivo) or reglas
+            return reglas
+
+        ia = self._interpretar_con_ia(texto, cultivo)
+        if ia is None:
+            return reglas  # IA caída/JSON inválido -> reglas
+
+        reg_es, ia_es = bool(reglas.get("es_plaga")), bool(ia.get("es_plaga"))
+        reg_pl, ia_pl = reglas.get("plaga"), ia.get("plaga")
+        # ¿coinciden? (mismo veredicto y misma plaga)
+        if reg_es == ia_es and (not ia_es or (ia_pl == reg_pl)):
+            mejor = dict(ia if ia.get("confianza", 0) >= reglas.get("confianza", 0) else reglas)
+            mejor.setdefault("pct_ia", ia.get("pct_ia"))
+            mejor["motor"] = "consenso_reglas_ia"
+            mejor["razon"] = (f"reglas y IA coinciden en {ia_pl or 'no plaga'}")
+            return mejor
+
+        # Difieren: buscamos precedente histórico
+        candidatas = self.cultivares_compatibles(cultivo) if cultivo else None
+        h_plaga = self._desempatar_por_historial(parcela_id, cultivo, candidatas)
+        if h_plaga:
+            return {"es_plaga": True, "plaga": h_plaga, "confianza": 0.8,
+                    "motor": "consenso_historico",
+                    "razon": (f"reglas={reg_pl}, IA={ia_pl}; precedente histórico "
+                              f"{h_plaga} en {parcela_id or cultivo}")}
+
+        # Fallback de seguridad: sin precedente, mandan las Reglas
+        reglas["confianza"] = min(reglas.get("confianza", 0.0), 0.6)
+        reglas["motor"] = "reglas_desempate"
+        reglas["razon"] = (f"IA discrepó ({ia_pl or 'no plaga'}); sin precedente "
+                           f"histórico, mandan las Reglas ({reg_pl or 'no plaga'})")
+        reglas.pop("pct_ia", None)
+        return reglas
 
     # ---------- motores ----------
 
@@ -356,10 +447,9 @@ class Clasificador:
             resultado = self._fusion_foto_texto(texto, rid=reporte.get("id"), cultivo=cultivo, audio=audio,
                                                foto=foto, etapa=etapa)
         elif tipo == "texto":
-            # Paso 2 del reto: IA estricta si está activada; si no, reglas.
-            resultado = self._interpretar_con_ia(texto, cultivo)
-            if resultado is None:
-                resultado = self.clasificar_texto(texto, cultivo)
+            # Paso 2 del reto: consenso híbrido (reglas+IA, desempate histórico)
+            # si INTERPRETAR_IA=2; reglas si 0 / IA con respaldo si 1.
+            resultado = self.clasificar_texto_hibrido(texto, cultivo, parcela_id)
         else:
             # voz y fotos sin pie: motor multimodal (STT/visión) con caché
             resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa, rid=reporte.get("id"))

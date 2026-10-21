@@ -360,6 +360,43 @@ def main() -> None:
     revisar("pct_ia=50 -> prioridad 79 (ejemplo oficial)", r_ia.pct == 50 and r_ia.prioridad == 79,
             f"-> pct={r_ia.pct} pri={r_ia.prioridad}")
 
+    print("\n[18] Consenso Híbrido (INTERPRETAR_IA=2) — reglas+IA con desempate histórico")
+    clf_h = crear_clasificador()
+    clf_h.modo_ia = "2"
+
+    # 1) coinciden -> motor consenso_reglas_ia
+    clf_h._interpretar_con_ia = lambda texto, cultivo: {
+        "es_plaga": True, "plaga": "roya_frijol", "confianza": 0.9, "motor": "ia_texto", "pct_ia": 30}
+    res = clf_h.clasificar_texto_hibrido("el frijol se puso chahuixtle, roya", "frijol")
+    revisar("reglas y IA coinciden -> consenso con confianza alta",
+            res.get("plaga") == "roya_frijol" and res.get("confianza", 0) >= 0.8
+            and res.get("motor") == "consenso_reglas_ia", str(res))
+
+    # 2) difieren SIN precedente -> mandan las REGLAS (fallback de seguridad)
+    clf_h._interpretar_con_ia = lambda texto, cultivo: {
+        "es_plaga": False, "plaga": None, "confianza": 0.9, "motor": "ia_texto"}
+    res = clf_h.clasificar_texto_hibrido("le cayo chahuixtle al frijol", "frijol")
+    revisar("IA dice no plaga pero reglas roya -> sin precedente, mandan reglas",
+            res.get("plaga") == "roya_frijol" and res.get("motor") == "reglas_desempate", str(res))
+
+    # 3) difieren CON precedente histórico de la parcela -> manda el histórico
+    previo_parcela = None
+    for p in json.loads((CACHE / "cache_casos_previos.json").read_text(encoding="utf-8")):
+        if p.get("plaga") == "pulgon" and p.get("parcela_id"):
+            previo_parcela = p
+            break
+    if previo_parcela:
+        parcela_h = previo_parcela["parcela_id"]
+        # texto con señal de piojillo -> reglas dicen pulgon; IA (fake) dice roya
+        clf_h._interpretar_con_ia = lambda texto, cultivo: {
+            "es_plaga": True, "plaga": "roya_frijol", "confianza": 0.9, "motor": "ia_texto"}
+        res = clf_h.clasificar_texto_hibrido("hay piojillo en el cultivo", None, parcela_h)
+        revisar("con precedente de parcela, el histórico desempata",
+                res.get("plaga") == "pulgon" and res.get("motor") == "consenso_historico",
+                str(res))
+    else:
+        print("  (se omite: sin previo pulgon con parcela)")
+
     print("\n[10] Robustez ante catálogo cambiado por los organizadores")
     clf_nuevo = crear_clasificador()
     clf_nuevo.plagas = clf_nuevo.plagas + [{

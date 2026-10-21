@@ -51,6 +51,17 @@
   - `pct` 0-100; si el productor no lo dice o no es numérico → **10**.
   - `es_plaga:false` si el mensaje no es un reporte (también detecta y anota
     intentos de ingeniería social).
+- **Modos de clasificación de texto** (`INTERPRETAR_IA` en `.env`):
+  - `0` → soló reglas deterministas (autoridad tradicional, record 40/40).
+  - `1` → IA primero (JSON estricto) con respaldo a reglas.
+  - `2` → **Consenso Híbrido con Desempate Histórico** (default en producción):
+    1. Reglas **e** IA evalúan el mensaje.
+    2. Coinciden → se envía esa clasificación (confianza alta).
+    3. Difieren → **precedente histórico** (`/casos-previos`): parcela ya
+       resuelta o cultivo 100 % consistente → manda ese caso.
+    4. Sin precedente → mandan **SIEMPRE las Reglas** (la IA jamás anula a las
+       reglas sin respaldo histórico; caso real: R-2056, la IA marcó "no plaga"
+       y la verdad era roya — las reglas no fallaron).
 - **Respaldo determinista**: si no hay API, timeout o JSON inválido, la
   decisión la toman las reglas ponderadas (`clasificar_texto`). Un fallo de
   red jamás puede costar un punto.
