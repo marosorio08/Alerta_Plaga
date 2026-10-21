@@ -36,7 +36,7 @@ AGENTE_REPO="https://github.com/marosorio08/Alerta_Plaga_Gusano.git"
 AGENTE_RAMA="main"
 AGENTE_INSTALAR="python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt"
 AGENTE_CONSTRUIR=""
-AGENTE_INICIAR=".venv/bin/python -u bot/listener.py --intervalo 20 --extras --avisos-reales --preguntas --telegram --enviar"
+AGENTE_INICIAR=".venv/bin/python -u bot/listener.py --intervalo 20 --extras --avisos-reales --preguntas --telegram --enviar --vigilante"
 """
 
 ENV_AGENTE = f"""# Agente Alerta Plaga — generado en el despliegue (NO subir a git)
