@@ -46,9 +46,9 @@ ESTADO = CACHE / "listener_estado.json"
 # el agente y la web compartan los mismos casos (variable CASOS_SALIDA en .env).
 CASOS_TODOS = Path(os.getenv("CASOS_SALIDA") or (CACHE / "casos_propuestos.json"))
 BITACORA = CACHE / "listener_bitacora.jsonl"    # historial de decisiones
-# Nota: antes los casos dudosos se parkeaban en revision_pendiente.json.
-# Ahora se registran siempre; "desconocida" vale 0 y no registrarlos pierde
-# el punto de es_plaga. El archivo antiguo se reprocesa con _reconciliar().
+# Casos dudosos: se revisan con el coordinador antes de registrarlos.
+PENDIENTES_REVISION = CACHE / "revision_pendiente.json"
+CONFIANZA_DUDOSA = float(os.getenv("CONFIANZA_DUDOSA", "0.55"))
 
 
 def ahora() -> str:
@@ -92,6 +92,11 @@ class Listener:
         # estados viejos en los que la respuesta se procesó con id equivocado.
         self.estado.setdefault("respuestas_aplicadas", [])
         self.casos = {c["reporte_id"]: c for c in cargar_json(CASOS_TODOS, [])}
+        self._parkeados: set[str] = {
+            str(p.get("reporte_id"))
+            for p in cargar_json(PENDIENTES_REVISION, [])
+            if p.get("reporte_id")
+        }
         self.reportes_actuales: dict[str, dict] = {
             r["id"]: r for r in cargar_json(RAIZ / "cache" / "reportes.json", [])
         }
@@ -214,6 +219,10 @@ class Listener:
                   f"{reporte.get('respuesta_a')}; se procesa como reporte suelto")
         entrada = padre or reporte
         para_clasificar = self._fusionar_respuesta(padre, reporte) if padre else reporte
+        if es_respuesta and padre:
+            # La respuesta aporta datos nuevos: el padre sale de la cola de
+            # dudosos para registrarse/complementarse con la información nueva.
+            self._parkeados.discard(str(padre.get("id")))
 
         try:
             res = self.clf.clasificar_reporte(para_clasificar)
@@ -332,10 +341,15 @@ class Listener:
         self._recalcular_brotes(self.reportes_actuales)
 
         # FASE 3 — registrar (ya con el brote corregido). Los casos dudosos
-        # también se registran: "desconocida" vale 0 y no registrarlos pierde
-        # el punto de es_plaga.
+        # se aparcan para revisión conjunta antes de enviarlos.
         for rid, (destino, detalle, caso) in acumulados.items():
             caso = self.casos.get(rid, caso)  # toma el caso ya recalculado
+            if rid in self._parkeados:
+                continue
+            motivo = self._es_dudoso(detalle, caso)
+            if motivo:
+                self._parkear_dudoso(destino, detalle, caso, motivo)
+                continue
             ya_enviado = rid in self.estado["enviados"]
             enviado = self._registrar_caso(destino, caso, forzar=bool(detalle.get("complemento")))
             if enviado and not ya_enviado:
@@ -421,7 +435,7 @@ class Listener:
             if reporte.get("respuesta_a"):
                 continue
             rid = reporte["id"]
-            if rid in self.casos:
+            if rid in self.casos or rid in self._parkeados:
                 continue
             detalle = self.procesar(reporte)
             caso = detalle.get("caso", {k: detalle.get(k) for k in ("reporte_id", "es_plaga", "plaga", "urgente")})
@@ -432,7 +446,7 @@ class Listener:
         self._recalcular_brotes(por_id)
 
         for rid, caso in list(self.casos.items()):
-            if rid in self.estado["enviados"]:
+            if rid in self.estado["enviados"] or rid in self._parkeados:
                 continue
             reporte = por_id.get(rid) or self._reporte_por_id(rid)
             if not reporte:
@@ -463,6 +477,49 @@ class Listener:
     def _guardar(self) -> None:
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
+
+    def _es_dudoso(self, detalle: dict, caso: dict) -> str | None:
+        """Devuelve el motivo si el caso merece revisión conjunta, o None."""
+        if not caso.get("es_plaga"):
+            conf = detalle.get("confianza") or 0
+            if float(conf) >= CONFIANZA_DUDOSA:
+                return None
+        conf = float(detalle.get("confianza") or 0)
+        if caso.get("plaga") == "desconocida":
+            return "plaga desconocida (el motor no identificó qué plaga es)"
+        if conf < CONFIANZA_DUDOSA:
+            return f"confianza baja ({conf:.2f})"
+        if caso.get("brote") and conf < 0.75:
+            return "brote marcado con confianza media (revisar antes de enviar)"
+        return None
+
+    def _parkear_dudoso(self, reporte: dict, detalle: dict, caso: dict, motivo: str) -> None:
+        """Guarda el caso en pendientes y avisa al coordinador por Telegram."""
+        pendientes = []
+        if PENDIENTES_REVISION.exists():
+            try:
+                pendientes = json.loads(PENDIENTES_REVISION.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                pendientes = []
+        pendientes = [p for p in pendientes if p.get("reporte_id") != caso["reporte_id"]]
+        pendientes.append({
+            "reporte_id": caso["reporte_id"],
+            "recibido": reporte.get("recibido"),
+            "texto": (detalle.get("texto") or "")[:280],
+            "motivo": motivo,
+            "caso": caso_para_api(caso),
+            "procesado": ahora(),
+        })
+        guardar_json(PENDIENTES_REVISION, pendientes)
+        self._parkeados.add(str(caso["reporte_id"]))
+        print(f"[{ahora()}] CASO DUDOSO {caso['reporte_id']}: {motivo} -> pendiente de revisión")
+        if self.telegram:
+            try:
+                from telegram_notificador import alerta_dudoso
+
+                alerta_dudoso(caso, motivo, detalle)
+            except Exception as exc:
+                print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
 
     def _arrancar_vigilante(self) -> None:
         """Avisa al coordinador por Telegram cuando hay reportes por verificar."""

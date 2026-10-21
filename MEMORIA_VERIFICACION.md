@@ -1,4 +1,4 @@
-# 🧠 MEMORIA DE VERIFICACIÓN — Equipo 7_7 (Actualización 21-oct 09:16)
+# 🧠 MEMORIA DE VERIFICACIÓN — Equipo 7_7 (Actualización 21-oct 09:30)
 
 > **Propósito de este archivo:** memoria del historial y **guía operativa** para verificar
 > los casos dudosos. El próximo agente/sesión debe leerlo ANTES de tocar cualquier cosa
@@ -19,16 +19,16 @@
 | Tabla oficial | `GET https://itg.tailf75570.ts.net/tabla.json` |
 | Cierre API | jue 22-oct 23:59 · Defensa viernes 23 |
 
-### Posición en vivo (corte 09:16)
+### Posición en vivo (corte 10:07)
 | # | Equipo | Pts/máx | % | Enviados | Brote | Preguntas | Avisos |
 |---|---|---|---|---|---|---|---|
-| 1 | MISA | 295/314 | 93.9 | 79 | 100 | 4 | 138 |
-| **2** | **7_7** | **292/314** | **93.0** | **79/79** | 93 | **10** | 131 |
-| 3 | string | 277/314 | 88.2 | 79 | 86 | 7 | 49 |
-| 4 | xD | 241/314 | 76.8 | 79 | null | 0 | 5 |
+| 1 | MISA | 322/341 | 94.4 | 86/86 | 100 | 4 | 138 |
+| **2** | **7_7** | **316/341** | **92.7** | **86/86** | 92 | **13** | 133 |
+| 3 | string | 290/341 | 85.0 | 84/86 | 87 | 7 | 49 |
 
-**Resumen:** 2.º lugar, **3 pts** de diferencia con MISA. **79/79 publicados → 79/79 enviados (al día).**
-Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 96 · tecnico 100 · **brote 93**.
+**Resumen:** 2.º lugar, **6 pts** de diferencia con MISA. **86/86 publicados → enviados (al día).**
+Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 97 · tecnico 98 · **brote 92**.
+Errores (9): 7 históricos + R-2082 técnico + R-2084 brote (ambos fijados por la API, irrecuperables).
 
 ---
 
@@ -36,7 +36,7 @@ Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 96 · tecnico 100 · **
 
 | # | Fallo real | Causa raíz | Fix (commit) |
 |---|---|---|---|
-| 1 | R-2043 brote ❌ | **Falso positivo**: el mismo productor (PR-191) reportó 3 veces en horas (R-2032/35/43) y sus propios casos disparaban brote | **Seguimientos reales** (`PR #6`): solo se excluyen los seguimientos (mismo productor/parcela <24 h sin visita o `respuesta_a`); la regla NO deduplica por productor |
+| 1 | R-2043 brote ❌ | **Falso positivo**: el mismo productor (PR-191) reportó 3 veces en horas (R-2032/35/43) y sus propios casos disparaban brote | **Dedupe por productor** (`43e5495`): los casos propios del mismo productor cuentan una vez por brote; los previos NUNCA se deduplican |
 | 2 | R-2056 es_plaga ❌ | **La IA sola** dijo "no plaga" en un texto de roya; las reglas acertaban | **Consenso Híbrido** (`d1a2202`): reglas+IA; si difieren → histórico; sin histórico → **mandan las REGLAS** |
 | 3 | R-2070/R-2073 brote ❌ | **Falso negativo (bug de orden)**: el listener calculaba brote con `resultados_a_casos([reporte])` — UN SOLO reporte — y `_recalcular_brotes` corría DESPUÉS del registro | **3 fases** (`8e486d5`): 1-clasificar todos → 2-recalcular brotes con el **conjunto COMPLETO** (previos + todos los casos propios) → 3-validar y registrar. **El brote NUNCA se decide con un solo reporte.** |
 | 4 | R-2071 sem/tec/brote +0 | Caso registrado solo con es_plaga+plaga; la API decía "todavía le pueden agregar: brote, semaforo, tecnico_id" | **Complemento** (`0744595`): reenviar POST /casos con los campos faltantes SUMA los puntos (+3 en R-2071 → 5/5) |
@@ -76,7 +76,7 @@ tecnico   = especialidad + carga<5 en MOMENTO=<recibido> + más cercano (haversi
 
 ### Paso 4 — Calcular el BROTE con el CONJUNTO COMPLETO ⚠️
 - **NUNCA** con un solo reporte (regresión R-2070).
-- Contar: previos + todos los casos propios, misma plaga, **<5 km**, ventana **168 h**, excluyendo solo seguimientos reales (sin dedupe por productor).
+- Contar: previos + todos los casos propios, misma plaga, **<5 km**, ventana **168 h**, con dedupe por productor.
 - Si el resultado difiere del que tenía el pendiente, anotarlo.
 
 ### Paso 5 — Consultar el estado real en la API (probe SEGURO)
@@ -101,7 +101,7 @@ El vigilante marca como `ok` los dudosos que ya se registraron (no los vuelve a 
 | Reporte | Motivo | Verificación | Resultado |
 |---|---|---|---|
 | **R-2071** (mosquita blanca) | sin semaforo/tecnico/brote al registrar | respuesta del productor aportó parcela P-092 + "la mitad" (50 %). Semaforo amarillo (invariante al pct 10-75), técnico T-03 (carga 2, entomología, más cercano), brote false (1 caso <5 km) | **Complemento +3 → 5/5** ✅ |
-| **R-2075** (seguimiento tizón) | plaga desconocida en cola | es seguimiento → la API solo califica es_plaga+plaga (máx 2); el probe registró 2/2 | **2/2** ✅ (seguimiento) |
+| **R-2075** (seguimiento tizón) | plaga desconocida en cola | es seguimiento → la API solo califica es_plaga+plaga (máx 2); el probe registró 2/2 | **2/2** ✅ (seguimiento). **Re-verificado 21-oct 09:30:** el 409 dice "todavía le pueden agregar brote/semaforo/tecnico", PERO al enviar el complemento la API responde "Este mensaje no abre un caso nuevo: el semáforo, el técnico y el brote no se califican" (máx 2). El complemento fue inofensivo (0 pts, sin pérdida). |
 | **R-2079** (roya del frijol) | "brote con confianza media" | "chahuixtle" en frijol → roya; **6 casos de roya <5 km en 168 h** → brote TRUE; semaforo amarillo, técnico T-09 | **5/5 automático** ✅ (el fix del conjunto completo lo salvó) |
 | R-2043, R-2070, R-2073 | errores históricos de brote | ver sección 2 | irrecuperables, no repetir |
 
@@ -159,8 +159,13 @@ python bot/estado_despliegue.py
 
 ## 7. Notas para el próximo agente
 
-1. **Todo OK al corte 09:16** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA.
+1. **Todo OK al corte 09:26** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA (se limpió en el servidor el 21-oct 09:26: R-2075 y R-2079 estaban residuales ya marcados `ok`).
 2. El flujo de verificación de la sección 3 es el que se usó para resolver R-2071/R-2075/R-2079 sin fallar.
-3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, sin dedupe por productor; solo se excluyen seguimientos reales). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
-4. **Complemento**: si la API devuelve "todavía le pueden agregar: brote, semaforo, tecnico_id", esos son puntos recuperables (+3) si calculamos bien los campos con los datos que aporta el productor (respuestas `-R` dan parcela/pct).
+3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, dedupe por productor). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
+4. **⚠️ NUEVO 21-oct 09:30 — El mensaje "todavía le pueden agregar..." del 409 NO es garantía de +3 en seguimientos.** En R-2075 la API anunció que faltaban brote/semaforo/tecnico, pero al enviar el complemento respondió "no abre un caso nuevo: no se califican" (máx 2, puntos 0). **El complemento solo suma si el reporte ABRE un caso nuevo** (R-2071 = caso nuevo → +3). Regla práctica: complementar solo cuando el reporte NO es seguimiento (usa la llama 409 → si el 409 de `validar_caso` o el POST devuelve esa frase, complementar es inofensivo pero no suma).
 5. El repo: `marosorio08/Alerta_Plaga_Gusano` (privado). PRs 1-5 fusionados. La rama de Emmanuel (Caso_Emmanuel) quedó 33 commits atrás de main: necesita `git pull origin main` antes de cualquier PR nuevo (ya avisado por Telegram).
+6. **⚠️ NUEVO 21-oct 09:45 — PR #6 de Emmanuel cerrado sin merge.** Proponía: refresco de `/casos-previos`+`/visitas`, respuestas con id original + complemento, reconciliación y persistencia; PERO también (a) quitaba el dedupe por productor del brote (reviviría el riesgo del falso positivo R-2043: verificado, el cambio no le afectaba a R-2070 ni a los 40 previos, pero quedaba sin red de seguridad si falla `visitas` o la detección de seguimiento) y (b) eliminaba el parkeo de dudosos y registraba `desconocida` a ciegas (contra el protocolo §3 Paso 6). Se le pidió reabrir con solo las mejoras de infraestructura (manteniendo dedupe=True y la cola de dudosos). No fusionar hasta que él valide brote sin dedupe contra 40/R-2043/R-2070.
+7. **✅ NUEVO 21-oct 09:52 — aviso del vigilante verificado y cerrado.** El aviso era por `R-2080-R` y `R-2081-R` ("No, nomás era eso, gracias.") marcados "plaga desconocida". Resultado: **son respuestas `-R` a consultas administrativas** (R-2080 = "¿curso de injertos?", R-2081 = "¿teléfono oficina Texcoco?"), ya registradas 1/1 como NO plaga. Al probe, ambas respuestas devuelven **404 "Mensaje no encontrado"** → no son reportes (caso de la nota de la §4), no puntúan ni restan. Se vació `revision_pendiente.json` y se marcaron `ok` en `vigilante_estado`. Sin cambios de posición (292/314).
+8. **⚠️ NUEVO 21-oct 09:55 — últimos 4 reportes (corte 09:42-09:55): 306 pts, 84/84, errores 9.** | **R-2080** y **R-2081**: 1/1 cada uno ✅ (no plaga). | **R-2083** (foto maíz P-186, gusano_cogollero): **5/5** ✅. | **R-2082** (gallina ciega, PR-273=P-239): arrancó 2/2; **SE COMPLEMENTÓ** (abría caso nuevo, máx 5): `brote=false ✅` + `semaforo=amarillo ✅` (subió a 4 pts), pero el `tecnico_id` que se envió **T-08 ❌** era INCORRECTO y la API **congeló el campo** ("Ya tiene todos los campos, no cambia"). El correcto era **T-06** (12.73 km vs 16.47 de T-08 al momento 09:39:29) → **+1 de tecnico perdido y 1 error contabilizado** (err 7→8). **Lección: en caso NUEVO el complemento puntúa/erra en vivo (no como R-2075 que era seguimiento); calcular técnico con el momento y parcela del reporte ANTES de enviar, nunca con el valor de la respuesta `-R`.** | **R-2084** (voz papa P-263, tizon_tardio): el listener lo registró con `brote=false`, pero **la API esperaba TRUE** (`brote: false` en detalle = campo errado; err 8→9). Causa raíz: R-2084 tiene a R-2014 (mismo productor PR-291, misma parcela, hace 2 días) + R-2007 (PR-283) → la API los cuenta como 3 casos legítimos (no son seguimientos), pero el **dedupe por productor** de nuestro motor los colapsaba a 2 → brote false. El punto quedó fijado e irrecuperable. **Lección: el dedupe por productor solo debe aplicar a seguimientos de horas (caso R-2043), NO a reportes de brote separados por días.**
+9. **✅ NUEVO 21-oct 09:55 — escaneo de complementos (75 reportes con plaga) → 1 recuperable.** Barrido con probe a todos los enviados: **R-2016** (roya_frijol, P-088) tenía `brote` pendiente → complemento `brote=true` **+1 ✅** (ahora 4/5). R-2056 único otro candidato pero queda en `es_plaga:false` con -1 y brote=false en nuestro cómputo → **no vale el riesgo** (ya registrado con error, probe no cambia). Resto de reportes: 5/5 o seguimientos (2/2). **Posición tras todo: 306/331 (92.4%), 2.º, 6 pts de diferencia con MISA (312).**
+10. **🔥 NUEVO 21-oct 10:00 — FIX DE BROTE (commit `TLDB—por-llenar`): dedupe por CLUSTER 24 h.** Diagnóstico de todos los errores de brote: R-2043 (falso positivo: mismo productor en horas) ordenó el dedupe por productor; pero ese dedupe GLOBAL causó el nuevo falso negativo R-2084 (mismo productor, misma parcela, 2 días después + R-2007 = 3 casos legítimos que la API exige TRUE). **Nueva regla en `nivel2.contar_casos_cercanos`**: los casos propios del mismo productor cuentan **1 si caen dentro de 24 h** y **por separado si hay >24 h** entre eventos (misma ventana que la detección de seguimientos). Validación: 40/40 previos + R-2070=True + R-2084=True + motor 77/77 + nivel2 40/40/40. `validar_brote.py` incluye ahora R-2084 como caso canónico. **No tocar este dedupe sin volver a correr la batería.**

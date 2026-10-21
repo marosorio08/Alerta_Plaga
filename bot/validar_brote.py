@@ -113,6 +113,23 @@ def verificar_casos_reales(clf: Clasificador, bitacora: Path | None = None) -> t
     else:
         print("  R-2070 sin brote en el conjunto (no elegible, revisar)")
 
+    # R-2084: tizon_tardio en P-263 (papa). La API exige brote=TRUE (en el
+    # 409 quedó marcado como FALLA cuando el listener mandó false). Razón:
+    # R-2014 (mismo PR-291, misma parcela, 2 días antes) y R-2007 (PR-283,
+    # 2.13 km) son 3 casos legítimos. Con dedupe cluster 24 h -> 2 eventos
+    # del PR-291 + R-2007 = 3 -> TRUE.
+    r2084 = brotes.get("R-2084")
+    if r2084 is not None:
+        total += 1
+        esperado_2084 = True
+        if r2084 == esperado_2084:
+            aciertos += 1
+        print(f"  R-2084 brote={r2084} esperado={esperado_2084} "
+              f"({'OK' if r2084 == esperado_2084 else 'FALLA'}) "
+              f"[regresión falso negativo del dedupe global -> cluster 24h]")
+    else:
+        print("  R-2084 sin brote en el conjunto (no elegible, revisar)")
+
     return aciertos, total
 
 

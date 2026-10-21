@@ -614,12 +614,13 @@ class Clasificador:
         No cuentan los seguimientos, los mensajes que no son reportes ni los
         que quedaron como "desconocida". La hora es la `recibido` del mensaje.
 
-        Refinamiento anti-falso-brote: los casos PROPIOS de un mismo productor
-        que sean seguimientos reales ya quedan excluidos por ``seguimiento_de``
-        (mismo productor/parcela <24 h sin visita) o por ``respuesta_a``. La
-        regla oficial NO deduplica por productor: dos casos legítimos del mismo
-        productor en parcelas distintas deben contar los dos. El parámetro
-        ``dedupe_productor_propios`` se conserva solo para pruebas históricas.
+        Refinamiento anti-falso-brote (cluster 24 h): los casos PROPIOS de un
+        mismo productor se agrupan con ventana de 24 h — si reporta el mismo
+        problema varias veces en horas, cuentan como UN caso (evita el falso
+        positivo R-2043); si vuelve a reportar con más de 24 h de diferencia,
+        es un evento nuevo y cuenta por separado (permite el brote TRUE de
+        R-2084, donde R-2014 y R-2084 del mismo productor/parcela separados
+        por 2 días sí suman). Los /casos-previos nunca se deduplican.
 
         Si un caso no tiene parcela con coordenadas o plaga aclarada, queda
         fuera del resultado (no se manda el campo, no se califica).
@@ -661,7 +662,7 @@ class Clasificador:
         for e in elegibles:
             n = contar_casos_cercanos(e["plaga"], e["lat"], e["lon"],
                                       e["recibido"], referencias,
-                                      dedupe_productor_propios=False)
+                                      dedupe_productor_propios=True)
             resultado[e["rid"]] = n >= MINIMO_CASOS_BROTE
         return resultado
 
