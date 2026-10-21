@@ -51,6 +51,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
 PENDIENTES = CACHE / "revision_pendiente.json"
 BITACORA = CACHE / "resolver_bitacora.jsonl"  # historial propio del resolver
+ALERTA_ESTADO = CACHE / "resolver_ultimo_aviso.json"  # anti-spam de Telegram
 
 # Umbrales: la confianza con la que el motor respalda la decisión.
 CONFIANZA_AUTO = 0.6
@@ -115,15 +116,38 @@ class ResolverCola:
                     continue
         return res
 
-    def _msg_telegram(self, texto: str) -> None:
+    def _msg_telegram(self, texto: str) -> bool:
         if not self.telegram:
             print("[resolver seco] " + texto.replace("\n", " | ")[:400])
-            return
+            return False
         try:
             from telegram_notificador import enviar
-            enviar(texto)
+            ok = enviar(texto)
+            print(f"[resolver] Telegram {'enviado' if ok else 'NO enviado'}")
+            return ok
         except Exception as exc:
             print(f"[resolver] telegram falló: {exc}")
+            return False
+
+    def _debe_avisar(self, cola: list[dict], intervalo_min: int = 30) -> bool:
+        """Evita repetir el mismo resumen cada 90 s.
+
+        Avisa cuando cambia la cola o cuando pasaron ``intervalo_min`` minutos
+        desde el último aviso, aunque el contenido sea idéntico.
+        """
+        firma = json.dumps(cola, ensure_ascii=False, sort_keys=True)
+        previo = _leer_json(ALERTA_ESTADO, {})
+        ahora = time.time()
+        ultimo = float(previo.get("ts") or 0)
+        if previo.get("firma") == firma and ahora - ultimo < intervalo_min * 60:
+            return False
+        return True
+
+    def _marcar_avisado(self, cola: list[dict]) -> None:
+        _guardar_json(ALERTA_ESTADO, {
+            "firma": json.dumps(cola, ensure_ascii=False, sort_keys=True),
+            "ts": time.time(),
+        })
 
     def _timbrar(self, rid: str, detalle: dict) -> None:
         detalle["ts"] = time.time()
@@ -396,14 +420,23 @@ class ResolverCola:
             print(f"[resolver] {rid}: {decision} — {resumen.get('justificacion', '')[:120]}")
             analizados += 1
             motivo = resumen.get("motivo") or pendiente.get("motivo") or ""
-            if decision in ("revision_humana", "pendiente"):
-                revisiones.append(f"  • {rid} — {str(motivo)[:60]}")
-        if revisiones:
-            cab = (f"🧠 <b>DUDOSOS EN ESPERA DE TU VISTO BUENO</b> "
+            # Se avisa de TODA la cola, no solo de revision_humana/pendiente.
+            # Antes, si todo quedaba como "resuelto"/"ya_resuelto", el resolver
+            # se quedaba callado para siempre y nadie se enteraba.
+            n = pendiente.get("n")
+            etiqueta = f"n={n} · " if n is not None else ""
+            revisiones.append(
+                f"  • {rid} — {decision} — {etiqueta}{str(motivo)[:60]}"
+            )
+        if revisiones and self._debe_avisar(cola):
+            cab = (f"🧠 <b>DUDOSOS EN COLA PARA VISTO BUENO</b> "
                    f"({len(revisiones)})\n")
-            pie = ("\nTe los dejo puestos en la cola: avísame en el bot "
-                   "(Revisar/Registrar) cómo los subimos.")
-            self._msg_telegram(cab + "\n".join(revisiones[:15]) + pie)
+            pie = ("\nNada se registra solo: revisa cada caso y usa los botones "
+                   "Registrar / Sin brote / Revisar.")
+            enviado = self._msg_telegram(cab + "\n".join(revisiones[:15]) + pie)
+            # Si el envío real falla, no se marca: el siguiente ciclo reintenta.
+            if enviado or not self.telegram:
+                self._marcar_avisado(cola)
         return analizados
 
     def correr(self) -> None:

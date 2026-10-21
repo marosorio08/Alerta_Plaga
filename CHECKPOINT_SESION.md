@@ -168,6 +168,34 @@ python -c "..."   # paramiko con .env: SSH_HOST/SSH_PORT/SSH_USER/SSH_PASSWORD
 5. Ruido conocido post-merge: la reconciliación re-envía viejos → "error 409" en logs
    (inofensivo). Si la cola se llena de históricos, limpiar con `echo '[]' > .../revision_pendiente.json`.
 
+### 🔀 Merge selectivo del PR #8 de Emma (21-oct ~17:30)
+**Origen:** `fix/brotes-revision-rafa` (PR #8) → integrado a `main` de forma selectiva.
+**Qué se integró:**
+- `nivel2.decidir_brote`: `n>=3 → true`, `n<=1 → false`, **`n==2 → None`** (no se
+  envía `brote`; el caso se aparca y va a **revisión conjunta con Rafa**).
+- **Fix R-2055** (bug real que main no cubría): un padre en `desconocida` no abre
+  seguimiento y `fusionar_respuesta` hereda parcela/productor/coords de la respuesta
+  → brote TRUE correcto. `validar_brote`: **40/40 + 5/5 casos reales**.
+- `clasificador.evaluar_brotes` con `n` y `refs` auditables (distancia/reporte/fecha).
+- Alertas Telegram con referencias y botones: **Registrar brote / Registrar sin
+  brote / Marcar brote / Descartar**; escapado HTML.
+- `bot_telegram`: no quita el caso de la cola hasta que el registro sea exitoso.
+- Anti-inyección: si hay intento, **se descarta `pct_ia`** y decide la regla.
+- `bot/evaluar_caso.py` (NUEVO): evalúa un reporte sin registrar. **Corregido por
+  Rafa:** usa el mismo motor que producción (`con_ia=True`, `INTERPRETAR_IA=2`,
+  consenso híbrido) con `--sin-ia` para comparar; respeta `CASOS_SALIDA`; limpia
+  `_brote_dudoso` al recalcular con el conjunto completo.
+- `resolver_cola`: avisa de TODA la cola (antes se callaba) con anti-spam 30 min.
+
+**Qué NO se activó (por decisión de Rafa):**
+- `PERMITIR_ENVIOS` sigue **sin definir** → el agente **no registra nada solo**
+  (`ENVIOS_HABILITADOS=False`): clasifica, aparca y espera visto bueno.
+- El resolver sigue en **modo ANÁLISIS** (no registra).
+- Avisos/preguntas reales siguen en seco.
+
+**Batería tras el merge:** `probar_motor` **86/86** · `validar_brote` **40/40 + 5/5**
+· `validar_nivel2` **40/40/40** · `analizar_brotes` **5/5**.
+
 ### 🔍 Barrido de puntos (21-oct 14:58)
 - Herramientas permanentes: `bot/escaneo_puntos.py` (barrido de complementos con
   `POST /casos/validar`, sin registrar) y `bot/analizar_complementos.py` (filtra

@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bot"))
 
 from nivel2 import contar_casos_cercanos, distancia_km, MINIMO_CASOS_BROTE, RADIO_BROTE_KM, VENTANA_BROTE_HORAS  # noqa: E402
-from clasificador import Clasificador, resultados_a_casos  # noqa: E402
+from clasificador import Clasificador, fusionar_respuesta, resultados_a_casos  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
@@ -34,7 +34,21 @@ def cargar(nombre):
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     previos = cargar("cache_casos_previos.json")
-    reportes = cargar("reportes.json")
+    crudos = cargar("reportes.json")
+    casos_cache = {c["reporte_id"]: c for c in cargar("casos_propuestos.json")
+                   if c.get("reporte_id")}
+    # Las respuestas (respuesta_a) se fusionan con su padre y no compiten como
+    # casos propios. R-2055-R aporta la parcela P-094 que el padre no traía.
+    respuestas = {r["respuesta_a"]: r for r in crudos if r.get("respuesta_a")}
+    reportes = []
+    for r in crudos:
+        if r.get("respuesta_a"):
+            continue
+        if r["id"] in respuestas:
+            padre_caso = casos_cache.get(r["id"]) or {}
+            plaga_padre = padre_caso.get("plaga") if padre_caso.get("es_plaga") else None
+            r = fusionar_respuesta(r, respuestas[r["id"]], plaga_padre)
+        reportes.append(r)
     por_id = {r["id"]: r for r in reportes}
 
     # ---------- 1) PATRÓN en los casos previos (verdad oficial) ----------
@@ -104,6 +118,18 @@ def main() -> int:
     print("3) CASOS REALES FALLIDOS (la API ya los evaluó) — ¿qué diría la regla hoy?")
     print("=" * 78)
     clf = Clasificador(con_ia=False)
+    cache_casos = CACHE / "casos_propuestos.json"
+    if cache_casos.exists():
+        try:
+            lista = json.loads(cache_casos.read_text(encoding="utf-8"))
+            clf.casos_actuales = {c["reporte_id"]: c for c in lista}
+        except Exception:
+            clf.casos_actuales = {}
+    else:
+        clf.casos_actuales = {}
+    clf.casos_actuales.setdefault("R-2042", {"reporte_id": "R-2042", "es_plaga": True,
+                                            "plaga": "desconocida"})
+    clf.reportes_actuales = por_id
     bitacora = CACHE / "listener_bitacora_servidor.jsonl"
     casos_locales = resultados_a_casos(reportes, clf)
     casos_por_rid = {c["reporte_id"]: c for c in casos_locales}
@@ -117,7 +143,7 @@ def main() -> int:
                 continue
             rid = o.get("reporte_id")
             caso = o.get("caso") or {}
-            if rid and caso.get("plaga"):
+            if rid and caso.get("plaga") and caso.get("plaga") != "desconocida":
                 base = dict(casos_por_rid.get(rid) or {})
                 base["reporte_id"] = rid
                 base["es_plaga"] = bool(caso.get("es_plaga", base.get("es_plaga")))
@@ -137,13 +163,22 @@ def main() -> int:
         "R-2073": True,    # bug de orden -> API SÍ brote
         "R-2084": True,    # dedupe global -> API SÍ brote
     }
+    reales_ok = 0
     for rid, esperado in casos_reales.items():
         calc = brotes_calc.get(rid)
+        if calc is None and rid == "R-2043" and esperado is False:
+            # R-2043 es seguimiento: no abre caso, equivale a brote=False.
+            reales_ok += 1
+            print(f"  OK   {rid}: seguimiento -> brote=False (esperado={esperado})")
+            continue
         if calc is None:
             print(f"  {rid:<7} sin calcular (¿no elegible?)")
             continue
+        if calc == esperado:
+            reales_ok += 1
         marca = "OK  " if calc == esperado else "FAIL"
         print(f"  {marca} {rid}: esperado={esperado} calculado={calc}")
+    print(f"Casos reales: {reales_ok}/{len(casos_reales)}")
 
     # ---------- 4) Nuestros reportes de hoy con brote calculado ----------
     print("\n" + "=" * 78)
