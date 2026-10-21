@@ -73,9 +73,21 @@
       </article>
 
       <article class="kpi kpi--danger">
-        <p class="kpi-label">🚨 Casos urgentes</p>
-        <p class="kpi-value"><span id="kpi-urgentes">—</span></p>
-        <p class="kpi-foot" id="kpi-urgentes-foot">—</p>
+        <p class="kpi-label">🚦 Semáforo</p>
+        <p class="kpi-value"><span id="kpi-semaforo">—</span></p>
+        <p class="kpi-foot" id="kpi-semaforo-foot">—</p>
+      </article>
+
+      <article class="kpi kpi--brote">
+        <p class="kpi-label">🦠 Brotes</p>
+        <p class="kpi-value"><span id="kpi-brotes">—</span></p>
+        <p class="kpi-foot" id="kpi-brotes-foot">—</p>
+      </article>
+
+      <article class="kpi">
+        <p class="kpi-label">👷 Técnicos</p>
+        <p class="kpi-value"><span id="kpi-tecnicos">—</span></p>
+        <p class="kpi-foot" id="kpi-tecnicos-foot">—</p>
       </article>
 
       <article class="kpi">
@@ -97,6 +109,7 @@
             <button class="toggle is-on" data-estado="plaga" type="button"><span class="dot dot-plaga"></span>⚠️ Plaga</button>
             <button class="toggle is-on" data-estado="sin_plaga" type="button"><span class="dot dot-sin_plaga"></span>✅ Sin plaga</button>
             <button class="toggle is-on" data-estado="sin_clasificar" type="button"><span class="dot dot-sin_clasificar"></span>⏳ Sin clasificar</button>
+            <button class="toggle is-on" data-capa="tecnicos" type="button"><span class="marker-tech-legend"></span>👷 Técnicos</button>
           </div>
         </header>
         <div class="map-shell">
@@ -108,8 +121,9 @@
               <li><span class="dot dot-plaga"></span>⚠️ Con plaga</li>
               <li><span class="dot dot-sin_plaga"></span>✅ Sin plaga</li>
               <li><span class="dot dot-sin_clasificar"></span>⏳ Sin clasificar</li>
+              <li><span class="marker-tech-legend"></span>👷 Técnico de campo</li>
             </ul>
-            <p class="map-legend-note">Tamaño del punto = superficie (ha)</p>
+            <p class="map-legend-note">Tamaño = superficie (ha) · Cuadrado = técnico</p>
           </div>
           <div class="map-fallback" id="map-fallback" hidden>
             <p>No se pudo cargar Leaflet desde el CDN. Los datos siguen disponibles en el monitor de casos.</p>
@@ -137,6 +151,8 @@
             </div>
           </div>
           <ul class="legend-list" id="estado-list"></ul>
+          <p class="mini-title">Semáforo de casos</p>
+          <ul class="legend-list" id="semaforo-list"></ul>
         </section>
 
         <section class="panel" aria-labelledby="top-title">
@@ -206,6 +222,27 @@
           </label>
 
           <label class="field">
+            <span class="sr-only">Semáforo</span>
+            <select id="filtro-semaforo">
+              <option value="">Todos los semáforos</option>
+              <option value="rojo">🔴 Rojo</option>
+              <option value="naranja">🟠 Naranja</option>
+              <option value="amarillo">🟡 Amarillo</option>
+              <option value="verde">🟢 Verde</option>
+              <option value="sin_dato">⚪ Sin dato</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="sr-only">Brote</span>
+            <select id="filtro-brote">
+              <option value="">Todos los casos</option>
+              <option value="1">🦠 Solo brotes</option>
+              <option value="0">Sin brote</option>
+            </select>
+          </label>
+
+          <label class="field">
             <span class="sr-only">Cultivo</span>
             <select id="filtro-cultivo"><option value="">Todos los cultivos</option></select>
           </label>
@@ -222,11 +259,14 @@
                 <th scope="col" class="th-sort" tabindex="0" data-sort="productor" aria-sort="none">Productor / parcela</th>
                 <th scope="col" class="th-sort" tabindex="0" data-sort="cultivo" aria-sort="none">Cultivo</th>
                 <th scope="col" class="th-sort" tabindex="0" data-sort="plaga" aria-sort="none">Diagnóstico</th>
+                <th scope="col" class="th-sort" tabindex="0" data-sort="semaforo" aria-sort="none">Semáforo</th>
+                <th scope="col" class="th-sort" tabindex="0" data-sort="tecnico" aria-sort="none">Técnico</th>
+                <th scope="col" class="th-sort" tabindex="0" data-sort="brote" aria-sort="none">Brote</th>
                 <th scope="col" class="th-sort" tabindex="0" data-sort="estado" aria-sort="none">Prioridad</th>
               </tr>
             </thead>
             <tbody id="tbody-casos">
-              <tr><td colspan="6" class="empty">Cargando casos…</td></tr>
+              <tr><td colspan="9" class="empty">Cargando casos…</td></tr>
             </tbody>
           </table>
         </div>

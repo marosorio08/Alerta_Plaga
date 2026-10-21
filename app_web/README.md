@@ -5,9 +5,9 @@ Dashboard web de monitoreo fitosanitario para el hackathon **Alerta Plaga**
 
 Muestra, en tiempo casi real:
 
-- **KPIs del equipo**: puntos, lugar, reportes procesados, casos urgentes y latencia mediana.
-- **Mapa Leaflet** con las 264 parcelas coloreadas por estado (urgente, con plaga, sin plaga, sin clasificar).
-- **Monitor de casos** con buscador y filtros por tipo (texto / voz / foto), urgencia y cultivo, columnas ordenables y ficha de detalle.
+- **KPIs del equipo**: puntos, lugar, reportes procesados, semáforo, brotes, técnicos disponibles y latencia mediana.
+- **Mapa Leaflet** con las 264 parcelas coloreadas por estado (urgente, con plaga, sin plaga, sin clasificar) y los técnicos de campo (especialidad y carga), con capas activables.
+- **Monitor de casos** con buscador y filtros por tipo (texto / voz / foto), urgencia, semáforo, brote y cultivo; columnas ordenables (incluye semáforo, técnico y brote) y ficha de detalle con prioridad, técnico y brote.
 - **Estadísticas**: plagas más frecuentes, cultivos afectados, distribución de parcelas y parcelas con más reportes.
 
 Stack: Node.js (≥ 20) + Express 4 + HTML/CSS/JS vanilla + Leaflet (CDN).
@@ -45,9 +45,10 @@ Endpoints propios:
 | Endpoint | Descripción |
 | --- | --- |
 | `GET /api/resumen` | Agregados: KPIs, por plaga, por cultivo, por municipio, top parcelas |
-| `GET /api/parcelas` | 264 parcelas + estado derivado (`?estado=`, `?cultivo=`, `?q=`) |
-| `GET /api/reportes` | Reportes enriquecidos (`?tipo=`, `?estado=`, `?urgente=1`, `?q=`) |
-| `GET /api/casos` | Clasificaciones propuestas por el bot (`cache/casos_propuestos.json`) |
+| `GET /api/parcelas` | 264 parcelas + estado, semáforo y brote (`?estado=`, `?semaforo=`, `?brote=1`, `?cultivo=`, `?q=`) |
+| `GET /api/reportes` | Reportes enriquecidos (`?tipo=`, `?estado=`, `?urgente=1`, `?semaforo=`, `?brote=1`, `?tecnico=`, `?q=`) |
+| `GET /api/tecnicos` | 12 técnicos con carga, disponibilidad y casos asignados (`?especialidad=`, `?disponible=1`, `?q=`) |
+| `GET /api/casos` | Clasificaciones propuestas por el bot, con semáforo, técnico y brote (`cache/casos_propuestos.json`) |
 | `GET /api/plagas` | Catálogo de plagas (marca `urgente` según la regla del reto) |
 | `GET /api/equipo` | Avance del equipo **sin** credenciales |
 | `GET /api/media/:archivo` | Proxy de fotos/audios de los reportes |
