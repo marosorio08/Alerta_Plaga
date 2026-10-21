@@ -40,7 +40,9 @@ from extras import Extras  # noqa: E402
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
 ESTADO = CACHE / "listener_estado.json"
-CASOS_TODOS = CACHE / "casos_propuestos.json"   # lo consume el dashboard
+# El dashboard lee este archivo. En el servidor se apunta a ~/app/cache para que
+# el agente y la web compartan los mismos casos (variable CASOS_SALIDA en .env).
+CASOS_TODOS = Path(os.getenv("CASOS_SALIDA") or (CACHE / "casos_propuestos.json"))
 BITACORA = CACHE / "listener_bitacora.jsonl"    # historial de decisiones
 
 
