@@ -263,7 +263,8 @@ def _a_datetime(valor) -> datetime | None:
 def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict],
                           radio_km: float = RADIO_BROTE_KM,
                           ventana_horas: float = VENTANA_BROTE_HORAS,
-                          dedupe_productor_propios: bool = False) -> int:
+                          dedupe_productor_propios: bool = True,
+                          ventana_dedupe_horas: float = 24.0) -> int:
     """Cuenta los casos de la misma plaga a menos de `radio_km` que llegaron
     entre `recibido - ventana_horas` y `recibido` (inclusive).
 
@@ -271,18 +272,29 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
     ``recibido``. Si el propio caso está en la lista (distancia 0, misma
     hora), se cuenta a sí mismo, tal como pide el reglamento.
 
-    `dedupe_productor_propios=True`: los CASOS PROPIOS (los que registró
-    nuestro sistema, marcados con ``propio=True`` y ``prod``) cuentan UNA vez
-    por productor. Evita que los mensajes de un mismo productor con el mismo
-    problema (sus "seguimientos") inflen el conteo y disparen brotes falsos
-    (caso real R-2043). Los /casos-previos (propio=False) NUNCA se deduplican.
+    `dedupe_productor_propios=True` (por defecto): los CASOS PROPIOS (los
+    que registró nuestro sistema, marcados con ``propio=True`` y ``prod``)
+    se AGRUPAN POR CLUSTER con ventana `ventana_dedupe_horas` (por defecto
+    24 h). Un productor que reporta el mismo problema en N horas cuenta UNA
+    vez; si vuelve a reportar con más de 24 h de diferencia, es un evento
+    NUEVO y cuenta por separado.
+
+    Por qué 24 h: es la misma ventana que el motor usa para detectar
+    seguimientos (`_reporte_padre_por_ventana`). Así:
+      - R-2032/R-2035/R-2043 (mismo PR-191 en horas, mismo problema) -> 1
+        caso (evita el FALSO POSITIVO R-2043).
+      - R-2014 -> R-2084 (mismo PR-291, misma parcela, 2 días después) -> 2
+        eventos (permite el brote TRUE que exige la API en R-2084).
+    Los /casos-previos (propio=False) NUNCA se deduplican.
     """
     t_ref = _a_datetime(recibido)
     if t_ref is None or lat is None or lon is None:
         return 0
     limite = t_ref - timedelta(hours=ventana_horas)
-    total = 0
-    productores_vistos: set = set()
+
+    # Separamos previos (siempre cuentan de a uno) y propios (por productor).
+    previos_n = 0
+    propios_por_prod: dict[str | None, list] = {}
     for ref in referencias:
         if ref.get("plaga") != plaga:
             continue
@@ -301,13 +313,24 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
         if limite <= t_otro <= t_ref:
             if dedupe_productor_propios and ref.get("propio"):
                 prod = ref.get("prod")
-                if prod is not None:
-                    if prod in productores_vistos:
-                        continue  # mismo productor ya contado en este brote
-                    productores_vistos.add(prod)
-                # prod None (sin dato): no se puede deduplicar, se cuenta
-            total += 1
-    return total
+                propios_por_prod.setdefault(prod, []).append(t_otro)
+                # `prod` None: se agrupa bajo None y se cuentan de a uno.
+            else:
+                previos_n += 1
+
+    clusters = 0
+    for prod, momentos in propios_por_prod.items():
+        if prod is None:
+            # Sin productor identificable: no se puede deduplicar.
+            clusters += len(momentos)
+            continue
+        momentos.sort()
+        n = 1  # el primer evento en la ventana
+        for a, b in zip(momentos, momentos[1:]):
+            if (b - a) > timedelta(hours=ventana_dedupe_horas):
+                n += 1  # separado más de 24 h: evento nuevo
+        clusters += n
+    return previos_n + clusters
 
 
 def es_brote(plaga: str, lat, lon, recibido, referencias: list[dict],

@@ -586,11 +586,13 @@ class Clasificador:
         No cuentan los seguimientos, los mensajes que no son reportes ni los
         que quedaron como "desconocida". La hora es la `recibido` del mensaje.
 
-        Refinamiento anti-falso-brote: los casos PROPIOS de un mismo productor
-        (posibles mensajes de seguimiento del mismo problema) cuentan UNA vez
-        por productor dentro del brote (caso real R-2043: un productor reportó
-        3 veces en pocas horas y nuestros 3 casos propios disparaban un brote
-        que la API rechazó). Los /casos-previos nunca se deduplican.
+        Refinamiento anti-falso-brote (cluster 24 h): los casos PROPIOS de un
+        mismo productor se agrupan con ventana de 24 h — si reporta el mismo
+        problema varias veces en horas, cuentan como UN caso (evita el falso
+        positivo R-2043); si vuelve a reportar con más de 24 h de diferencia,
+        es un evento nuevo y cuenta por separado (permite el brote TRUE de
+        R-2084, donde R-2014 y R-2084 del mismo productor/parcela separados
+        por 2 días sí suman). Los /casos-previos nunca se deduplican.
 
         Si un caso no tiene parcela con coordenadas o plaga aclarada, queda
         fuera del resultado (no se manda el campo, no se califica).
