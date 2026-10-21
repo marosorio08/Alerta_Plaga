@@ -168,5 +168,18 @@ python -c "..."   # paramiko con .env: SSH_HOST/SSH_PORT/SSH_USER/SSH_PASSWORD
 5. Ruido conocido post-merge: la reconciliación re-envía viejos → "error 409" en logs
    (inofensivo). Si la cola se llena de históricos, limpiar con `echo '[]' > .../revision_pendiente.json`.
 
+### 🔍 Barrido de puntos (21-oct 14:58)
+- Herramientas permanentes: `bot/escaneo_puntos.py` (barrido de complementos con
+  `POST /casos/validar`, sin registrar) y `bot/analizar_complementos.py` (filtra
+  seguimientos/desconocida). Revisar el archivo `cache/escaneo_resultado.json`.
+- Resultado 14:58: 114/114 enviados · 0 sin registrar · 14 "complementos" sugeridos
+  por la API pero TODOS son seguimientos o plaga `desconocida` → la API no califica
+  `semaforo/técnico/brote` en esos (máx 2, como R-2075) → **no hay puntos ocultos
+  recuperables hoy**.
+- La brecha de 10 pts con MISA es **estructural**: MISA err=7 vs 10 nuestros, y
+  brote 100% vs 92%. Nuestros 5 errores de brote (R-2043/R-2055/R-2070/R-2073/R-2084)
+  son irrecuperables. Solo se cierra acertando los brotes/campos que queden y que
+  MISA falle alguno; no tocar el dedupe ni ceder brotes sin visto bueno.
+
 **Estado al cerrar (21-oct ~14:30):** cola vacía, resolver en modo análisis,
 agente RUNNING con el último main, posición ~381/407 (2.º, ~4 pts de MISA).
