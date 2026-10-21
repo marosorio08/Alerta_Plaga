@@ -40,7 +40,7 @@ MODELO_VISION = os.getenv("OPENROUTER_VISION_MODEL", "openai/gpt-4o-mini")
 
 # Prompts centralizados (se pueden afinar sin tocar código)
 PROMPT_VISION = """Eres un fitopatólogo/entomólogo agrónomo mexicano. Te muestran la foto
-de un cultivo de {cultivo} ({etapa}). Usa el catálogo oficial de plagas para decidir.
+de un cultivo de __CULTIVO__ (__ETAPA__). Usa el catálogo oficial de plagas para decidir.
 Catálogo (id, síntomas visibles):
 - gusano_cogollero: larvas en cogollo, hojas perforadas/raspadas, excremento como aserrín (maíz)
 - roya_frijol: pústulas café rojizo en el envés, polvo color óxido (frijol)
@@ -54,9 +54,21 @@ Catálogo (id, síntomas visibles):
 - gorgojo_khapra: larvas peludas cafés, pellejos, granos huecos, polvo (grano almacenado)
 
 Responde SOLO con JSON sin markdown:
-{"es_plaga": true|false, "plaga": "id_catálogo o desconocida", "confianza": 0.0-1.0,
- "sintomas": "descripción breve de lo que ves"}
-Si no se distingue plaga, plaga="desconocida". Si la imagen no es de cultivo, es_plaga=false."""
+{"es_plaga": true, "plaga": "id_catalogo_o_desconocida", "confianza": 0.8,
+ "sintomas": "descripcion breve de lo que ves"}
+IMPORTANTE: en un cultivo de __CULTIVO__ las UNICAS plagas posibles son: __CANDIDATAS__.
+Si nada encaja con esas opciones usa "desconocida". Si la imagen no muestra cultivo
+ni dano de plaga, responde es_plaga=false."""
+
+
+def prompt_vision(cultivo: str, etapa: str, candidatas: list[str] | None = None) -> str:
+    """Sustituye los marcadores sin usar str.format (el JSON de ejemplo lo rompería)."""
+    lista = ", ".join(candidatas) if candidatas else "cualquiera del catalogo"
+    return (
+        PROMPT_VISION.replace("__CULTIVO__", cultivo or "cultivo")
+        .replace("__ETAPA__", etapa or "etapa desconocida")
+        .replace("__CANDIDATAS__", lista)
+    )
 
 
 def descargar_media(archivo_url: str) -> Path:
@@ -92,7 +104,8 @@ def transcribir_audio(archivo: Path | None, idioma: str = "es") -> str:
     return (datos.get("text") or datos.get("transcript")) or ""
 
 
-def describir_foto(archivo: Path | None, cultivo: str = "cultivo", etapa: str = "") -> dict:
+def describir_foto(archivo: Path | None, cultivo: str = "cultivo", etapa: str = "",
+                   candidatas: list[str] | None = None) -> dict:
     """Envía la foto a un modelo de visión (chat completions) y devuelve la decisión."""
     if not archivo or not archivo.exists():
         return {"es_plaga": None, "plaga": None, "confianza": 0.0, "sintomas": ""}
@@ -101,7 +114,7 @@ def describir_foto(archivo: Path | None, cultivo: str = "cultivo", etapa: str = 
     mensaje = {
         "role": "user",
         "content": [
-            {"type": "text", "text": PROMPT_VISION.format(cultivo=cultivo, etapa=etapa)},
+            {"type": "text", "text": prompt_vision(cultivo, etapa, candidatas)},
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime};base64,{b64}"},
@@ -138,7 +151,8 @@ def _parsear_json_modelo(texto: str) -> dict:
     return {"es_plaga": None, "plaga": None, "confianza": 0.0, "sintomas": texto[:200]}
 
 
-def procesar_reporte_multimedia(reporte: dict, cultivo: str, etapa: str) -> dict:
+def procesar_reporte_multimedia(reporte: dict, cultivo: str, etapa: str,
+                                candidatas: list[str] | None = None) -> dict:
     """Orquesta voz/foto para un reporte. Devuelve datos para el clasificador."""
     audio_url = reporte.get("audio_url")
     foto_url = reporte.get("foto_url")
@@ -161,7 +175,7 @@ def procesar_reporte_multimedia(reporte: dict, cultivo: str, etapa: str) -> dict
             resultado["fuente"] = "whisper"
         elif foto_url and reporte.get("tipo") == "foto":
             archivo = descargar_media(foto_url)
-            vision = describir_foto(archivo, cultivo, etapa)
+            vision = describir_foto(archivo, cultivo, etapa, candidatas)
             resultado.update(
                 {
                     "fuente": "vision",

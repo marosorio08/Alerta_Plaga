@@ -41,63 +41,84 @@ PLAGAS_URGENTES = {
 }
 # Urgente si es_plaga y su id está en el conjunto (regla 100% determinista)
 
-# ---- mensajes que NO son de plaga (pre-filtro) ----
-SINONIMOS_NO_PLAGA = [
-    "saludar", "saludo", "hola", "buenas noches", "buenos días",
-    "plática", "platica", "fertilización", "fertilizacion", "curso",
-    "junta", "ejidatarios", "ejido", "horario", "hora abren", "abren la",
-    "oficina", "trámite", "tramite", "precio", "precios", "vender", "comprar",
-    "préstamo", "prestamo", "crédito", "credito", "inscripción", "inscripcion",
-    "sábado", "sabado", "mañana abren", "amanecer", "feliz día", "gracias", "saludos",
+# ---- mensajes que NO son de plaga: patrones fuertes (trámites, saludos, precios) ----
+PATRONES_NO_PLAGA = [
+    "para saludar", "nomás para saludar", "nomas para saludar", "solo para saludar",
+    "platica", "plática", "curso", "capacitacion", "capacitación", "taller",
+    "junta", "ejidatario", "asamblea", "reunion", "reunión",
+    "que hora abren", "hora abren", "abren la oficina", "oficina", "horario",
+    "precio", "precios", "pagando", "kilo", "vender", "compra", "cuanto cuesta",
+    "apoyo", "gobierno", "semilla", "programa", "subsidio", "solicitud", "papeles",
+    "tramite", "trámite", "credito", "crédito", "prestamo", "préstamo",
+    "inscripcion", "inscripción", "constancia",
+    "que pidieron", "llegaron los", "cuando llega el fertilizante", "es cierto",
+    "feliz dia", "feliz día", "felicidades", "bendiciones",
 ]
 
-# ---- sinonimias locales -> id plaga (del catálogo GET /plagas) ----
-PLAGA_POR_SINONIMO: dict[str, str] = {}
-_PLAGA_ALIASES = {
-    "gusano_cogollero": [
-        "cogollero", "cogollo", "gusano del cogollo", "gusano soldado",
-        "gusano verde", "gusanos verdes", "gusanito", "aguijón", "perfor", "agujer",
-    ],
-    "roya_frijol": [
-        "chahuixtle", "roya", "polvillo", "polvo color óxido", "polvito",
-        "puntitos cafés", "puntitos cafés", "herrumbre", "oxido",
-    ],
-    "tizon_tardio": [
-        "tizón", "tizon", "quema", "quemazón", "hielo", "podrido", "huele a podrido",
-        "manchas cafés", "manchas café", "mancha negra", "papa negra", "chahuixtle de la papa",
-    ],
-    "pulgon": [
-        "pulgón", "pulgon", "piojillo", "piojo", "animalitos verdes",
-        "animalitos", "bichitos", "tapizada", "mielecilla", "fumagina",
-    ],
-    "gallina_ciega": [
-        "gallina ciega", "nixticuil", "gusano blanco", "raíces comidas", "raices comidas",
-        "salir sin raíz", "sin raiz", "arrancan fácil", "marchita aunque hay humedad",
-        "larvas blancas", "plantas acamadas",
-    ],
-    "mosquita_blanca": [
-        "mosquita", "mosquilla", "palomilla blanca", "mosquitas", "amarillas y pegajosas",
-        "hojas pegajosas", "amarillas y",
-    ],
-    "chapulin": [
-        "chapulín", "chapulin", "chapulines", "langosta", "saltamontes", "brincan",
-        "matas peladas", "defoliada", "chapulinada",
-    ],
-    "mancha_chocolate": [
-        "mancha de chocolate", "chocolate", "manchita café", "manchas café rojizo",
-    ],
-    "hlb": [
-        "dragón amarillo", "dragon amarillo", "enverdecimiento", "moteado amarillo",
-        "psílidos", "psilidos", "amarillamiento", "limón amarillo",
-    ],
-    "gorgojo_khapra": [
-        "gorgojo khapra", "peludo del grano", "gusanito peludo", "grano almacenado",
-        "pellejos", "mudas", "granos huecos", "costales",
-    ],
+# ---- señales de plaga ponderadas (incluye variantes ruidosas de Whisper) ----
+SENALES_PLAGA: dict[str, dict[str, float]] = {
+    "gusano_cogollero": {
+        "cogollero": 3, "cogollo": 3, "cojo ": 2, "cohollo": 3, "corollo": 3,
+        "gusano del cogollo": 3, "gusano soldado": 2, "gusano verde": 3,
+        "gusanos verdes": 3, "gusanito": 1.5, "gusano": 1.2,
+        "excremento": 2.5, "aserrin": 2.5, "acerrin": 2.5, "acerin": 2.5,
+        "cernin": 2.5, "serrin": 2.5, "como acerrin": 2.5,
+        "rayitas": 2, "hojas rotas": 2, "raspadas": 1.5, "agujer": 2, "perforad": 2,
+    },
+    "roya_frijol": {
+        "chahuixtle": 3, "roya": 3, "roy a": 3, "polvillo": 3, "polvito": 2,
+        "polvo color oxido": 3, "color oxido": 2.5, "herrumbre": 2.5,
+        "granitos cafes": 2.5, "puntitos cafes": 2.5, "se le pega a uno en los dedos": 2.5,
+    },
+    "tizon_tardio": {
+        "tizon": 3, "hielo": 2.5, "quemazon": 2.5, "quemad": 2.5,
+        "huele a podrido": 3, "podrido": 2.5, "moho blanco": 2.5,
+        "manchas cafes": 2, "manchas cafe": 2, "mancha negra": 2,
+        "negra la planta": 2, "se puso negra": 2,
+    },
+    "pulgon": {
+        "pulgon": 3, "piojillo": 3, "piojo": 2.5, "piojito": 2.5,
+        "animalitos verdes": 2.5, "bichitos": 2, "mielecilla": 2.5,
+        "fumagina": 2.5, "hollin": 2.5, "cobojin": 2.5,
+        "pegajos": 1.5, "como con miel": 2, "tapizada": 1.5, "tapizadas": 1.5,
+    },
+    "gallina_ciega": {
+        "gallina ciega": 3, "nixticuil": 3, "gusano blanco": 3,
+        "raices comidas": 3, "sin raiz": 3, "salen sin raiz": 3,
+        "arrancan facil": 2.5, "se arrancan": 2, "marchita": 1.5,
+        "larvas blancas": 2.5, "acamadas": 2,
+    },
+    "mosquita_blanca": {
+        "mosquita blanca": 3, "mosquitas blancas": 3, "mosquilla": 3, "mosquita": 2.5,
+        "mosquitas": 2.5, "palomilla blanca": 3,
+        "amarillas y pegajosas": 2.5, "hojas pegajosas": 1.5,
+    },
+    "chapulin": {
+        "chapulin": 3, "chapulines": 3, "chapulina": 3, "chapulinada": 3,
+        "langosta": 2.5, "saltamontes": 3, "brincan": 2,
+        "matas peladas": 2.5, "defoliada": 2,
+    },
+    "mancha_chocolate": {
+        "mancha de chocolate": 3, "chocolate": 2.5, "manchita cafe": 2,
+        "manchas cafe rojizo": 2.5, "manchas redondas": 2,
+    },
+    "hlb": {
+        "dragon amarillo": 3, "hlb": 3, "enverdecimiento": 3,
+        "moteado amarillo": 2.5, "psilido": 2.5, "amarillamiento": 2,
+    },
+    "gorgojo_khapra": {
+        "gorgojo khapra": 3, "khapra": 3, "peludo del grano": 3,
+        "gusanito peludo": 3, "granos huecos": 3, "pellejos": 2.5,
+        "granero": 2.5, "grano almacenado": 3, "maiz almacenado": 2.5,
+    },
 }
-for _id, alis in _PLAGA_ALIASES.items():
-    for _a in alis:
-        PLAGA_POR_SINONIMO[_a] = _id
+
+# señales de que es un seguimiento de un reporte previo (no nombra plaga)
+PATRONES_SEGUIMIENTO = [
+    "ya vieron", "otra vez", "confirmar", "les llego", "les llegó",
+    "cuando viene", "cuando vienen", "cuando pueden venir", "sigo esperando",
+    "no me han contestado",
+]
 
 
 def cargar_catalogo(nombre: str) -> list:
@@ -158,67 +179,72 @@ class Clasificador:
     # ---------- motores ----------
 
     def clasificar_texto(self, texto: str | None, cultivo: str | None) -> dict:
-        """Reglas por sinonimias + cruce de cultivo. Sin IA."""
+        """Reglas ponderadas + cruce de cultivo. Sin IA."""
         t = self.normalizar(texto)
         if not t:
             return {"es_plaga": False, "plaga": None, "confianza": 0.0, "motor": "vacio",
                     "razon": "sin texto"}
 
-        # 1) mensajes sin contenido de plaga (pre-filtro)
-        if any(no in t for no in SINONIMOS_NO_PLAGA):
-            # contra-evidencia: si también menciona una plaga, manda la plaga
-            plaga = self._plaga_por_sinonimos(t)
-            if plaga:
-                return self._resultado_plaga(plaga, cultivo, "texto", t)
-            return {"es_plaga": False, "plaga": None, "confianza": 0.95, "motor": "prefiltro",
-                    "razon": "mensaje no agrícola"}
+        puntajes = self._puntuar_plagas(t)
+        mejor = max(puntajes, key=puntajes.get) if puntajes else None
+        tiene_senal = mejor is not None and puntajes[mejor] >= 2.0
 
-        # 2) búsqueda de plaga por sinonimias del catálogo
-        plaga = self._plaga_por_sinonimos(t)
-        if plaga:
-            return self._resultado_plaga(plaga, cultivo, "texto", t)
+        # 1) trámite/consulta sin señal de plaga -> NO es plaga
+        es_admin = any(p in t for p in PATRONES_NO_PLAGA)
+        if es_admin and not tiene_senal:
+            return {"es_plaga": False, "plaga": None, "confianza": 0.92, "motor": "prefiltro",
+                    "razon": "consulta administrativa o saludo"}
 
-        # 3) si no hay señal clara -> desconocida (nunca resta)
-        return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.3, "motor": "texto_desconocida",
+        # 2) plaga identificada por señales
+        if tiene_senal:
+            return self._resultado_plaga(mejor, cultivo, "texto", t, puntajes[mejor])
+
+        # 3) seguimiento de un caso previo sin nombrar plaga
+        if any(p in t for p in PATRONES_SEGUIMIENTO):
+            return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.5,
+                    "motor": "seguimiento", "razon": "seguimiento sin plaga explícita"}
+
+        # 4) sin señal y sin trámite -> describe un problema; no inventamos plaga
+        return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.3,
+                "motor": "texto_desconocida",
                 "razon": "describe problema sin plaga identificable"}
 
-    def _plaga_por_sinonimos(self, t: str) -> str | None:
-        for sinonimo, plaga_id in PLAGA_POR_SINONIMO.items():
-            if sinonimo in t:
-                return plaga_id
-        return None
+    def _puntuar_plagas(self, t: str) -> dict[str, float]:
+        """Suma pesos de las señales encontradas por plaga."""
+        puntajes: dict[str, float] = {}
+        for plaga_id, senales in SENALES_PLAGA.items():
+            total = sum(peso for patron, peso in senales.items() if patron in t)
+            if total:
+                puntajes[plaga_id] = total
+        return puntajes
 
-    def _resultado_plaga(self, plaga_id: str, cultivo: str | None, motor: str, texto_norm: str) -> dict:
-        """Cruza la plaga detectada con el cultivo de la parcela (descarte)."""
-        plaga = next((p for p in self.plagas if p["id"] == plaga_id), None)
-        if plaga is None:
+    def cultivares_compatibles(self, cultivo: str | None) -> set[str]:
+        """IDs de plaga posibles para un cultivo según el catálogo."""
+        if not cultivo:
+            return {p["id"] for p in self.plagas}
+        return {p["id"] for p in self.plagas if cultivo in set(p.get("cultivos", []))}
+
+    def _resultado_plaga(self, plaga_id: str, cultivo: str | None, motor: str,
+                         texto_norm: str, puntaje: float = 0.0) -> dict:
+        """Cruza la plaga detectada con el cultivo de la parcela."""
+        compatibles = self.cultivares_compatibles(cultivo)
+        if cultivo and plaga_id not in compatibles:
+            # La señal no encaja con el cultivo: buscamos la mejor alternativa válida
+            puntajes = self._puntuar_plagas(texto_norm)
+            alternativas = {k: v for k, v in puntajes.items()
+                            if k in compatibles and v >= 2.0 and k != plaga_id}
+            if alternativas:
+                alt = max(alternativas, key=alternativas.get)
+                return {"es_plaga": True, "plaga": alt, "confianza": 0.55, "motor": motor,
+                        "razon": f"señal reasignada al cultivo {cultivo}"}
             return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.2, "motor": motor,
-                    "razon": "plaga inválida"}
+                    "razon": f"señal incompatible con cultivo {cultivo}"}
 
-        cultivos_validos = set(plaga.get("cultivos", []))
-        if cultivo and cultivos_validos and cultivo not in cultivos_validos:
-            # La plaga detectada no corresponde al cultivo de la parcela:
-            # por seguridad "desconocida" no resta; o intentamos otra.
-            # Intentamos re-buscar otra plaga compatible con ese cultivo.
-            alt = self._plaga_en_cultivo(texto_norm, cultivo)
-            if alt:
-                return {"es_plaga": True, "plaga": alt, "confianza": 0.6, "motor": motor,
-                        "razon": f"sinónimo en parcela de {cultivo}"}
-            return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.2, "motor": motor,
-                    "razon": f"sinónimo fuera de cultivo {cultivo}"}
-
-        confianza = 0.9 if cultivo and cultivo in cultivos_validos else 0.75
+        confianza = 0.9 if cultivo and plaga_id in compatibles else 0.75
+        if puntaje >= 5:
+            confianza = min(0.97, confianza + 0.05)
         return {"es_plaga": True, "plaga": plaga_id, "confianza": confianza, "motor": motor,
-                "razon": f"sinónimo en parcela de {cultivo or 'desconocido'}"}
-
-    def _plaga_en_cultivo(self, texto_norm: str, cultivo: str) -> str | None:
-        """Busca cualquier sinonimia compatible con el cultivo."""
-        candidatas = [p for p in self.plagas if cultivo in set(p.get("cultivos", []))]
-        for p in candidatas:
-            for sinonimo, plaga_id in PLAGA_POR_SINONIMO.items():
-                if plaga_id == p["id"] and sinonimo in texto_norm:
-                    return plaga_id
-        return None
+                "razon": f"señal compatible con {cultivo or 'cultivo desconocido'} (score {puntaje:.1f})"}
 
     # ---------- orquestación por reporte ----------
 
@@ -235,8 +261,8 @@ class Clasificador:
         if tipo == "texto" or (tipo == "foto" and texto and self._texto_tiene_senal(texto)):
             resultado = self.clasificar_texto(texto, cultivo)
         else:
-            # voz y fotos sin caption: motor multimodal (whisper/visión) si hay key
-            resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa)
+            # voz y fotos: motor multimodal (whisper/visión) con caché
+            resultado = self._motor_multimedia(tipo, texto, audio, foto, cultivo, etapa, rid=reporte.get("id"))
 
         # anti prompt-injection: NO cambia la decisión, solo se anota
         resultado["injection"] = self.es_prompt_injection(texto or resultado.get("texto"))
@@ -254,8 +280,8 @@ class Clasificador:
             w in t for w in ["mándo", "mando", "mire", "mira", "asi", "como esta", "que sera"]
         )
 
-    def _motor_multimedia(self, tipo, texto, audio, foto, cultivo, etapa="") -> dict:
-        """Intenta transcripción/visión con OpenRouter; degrada conservadoramente."""
+    def _motor_multimedia(self, tipo, texto, audio, foto, cultivo, etapa="", rid=None) -> dict:
+        """Usa transcripción/visión (caché primero) y valida contra el cultivo."""
         # Reglas de cultivo exclusivo (deterministas, alta señal):
         # limón -> solo hlb ; grano almacenado -> solo gorgojo_khapra
         cultivo_exclusivo = {"limón": "hlb", "grano almacenado": "gorgojo_khapra"}
@@ -263,39 +289,62 @@ class Clasificador:
             return {"es_plaga": True, "plaga": cultivo_exclusivo[cultivo],
                     "confianza": 0.6, "motor": "cultivo_exclusivo",
                     "razon": f"parcela de {cultivo}, único candidato {cultivo_exclusivo[cultivo]}"}
-        # Pre-filtro: fotos/audios que acompañan a un texto no-agrícola
-        if texto and not self._plaga_por_sinonimos(self.normalizar(texto)):
-            if any(no in self.normalizar(texto) for no in SINONIMOS_NO_PLAGA):
-                return {"es_plaga": False, "plaga": None, "confianza": 0.8, "motor": "multimedia_prefiltro",
-                        "razon": "medio con mensaje no agrícola"}
-        if self.con_ia:
-            try:
-                from motor_audio_foto import procesar_reporte_multimedia
 
-                res = procesar_reporte_multimedia(
-                    {"tipo": tipo, "audio_url": audio, "foto_url": foto}, cultivo or "", etapa or ""
-                )
-                fuente = res.get("fuente")
-                if fuente == "whisper" and res.get("texto"):
-                    return self.clasificar_texto(res["texto"], cultivo) | {
-                        "motor": "whisper+texto", "razon": "transcripción de voz"
-                    }
-                if fuente == "vision" and res.get("es_plaga_sugerida") is not None:
-                    es = bool(res["es_plaga_sugerida"])
-                    p = res.get("plaga_sugerida") if es else None
-                    return {
-                        "es_plaga": es,
-                        "plaga": p or ("desconocida" if es else None),
-                        "confianza": res.get("confianza", 0.5),
-                        "motor": "vision",
-                        "razon": f"visión: {res.get('sintomas', '')[:100]}",
-                    }
-            except Exception as exc:  # pragma: no cover - degrada
-                return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.4,
-                        "motor": f"{tipo}_fallo_ia", "razon": f"IA falló: {exc}"}
-        # Fallback conservador: reporte con foto/audio -> plausible plaga desconocida
-        return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.5, "motor": f"{tipo}_desconocido",
+        res = self._multimedia(rid, tipo, audio, foto, cultivo, etapa)
+        fuente = res.get("fuente")
+
+        if fuente == "whisper" and res.get("texto"):
+            base = self.clasificar_texto(res["texto"], cultivo)
+            base["motor"] = "whisper+" + base.get("motor", "texto")
+            base["texto"] = res["texto"]
+            base["razon"] = "transcripción: " + base.get("razon", "")
+            return base
+
+        if fuente == "vision" and res.get("es_plaga_sugerida") is not None:
+            es = bool(res["es_plaga_sugerida"])
+            if not es:
+                return {"es_plaga": False, "plaga": None,
+                        "confianza": float(res.get("confianza", 0.7)), "motor": "vision",
+                        "razon": f"visión: no es plaga ({str(res.get('sintomas'))[:80]})"}
+            plaga = res.get("plaga_sugerida") or "desconocida"
+            # validación contra el cultivo (evita alucinaciones imposibles)
+            compatibles = self.cultivares_compatibles(cultivo)
+            if cultivo and plaga != "desconocida" and plaga not in compatibles:
+                return {"es_plaga": True, "plaga": "desconocida",
+                        "confianza": 0.3, "motor": "vision",
+                        "razon": f"visión propuso {plaga}, imposible en {cultivo}"}
+            return {"es_plaga": True, "plaga": plaga,
+                    "confianza": float(res.get("confianza", 0.5)), "motor": "vision",
+                    "razon": f"visión: {str(res.get('sintomas'))[:100]}"}
+
+        # Sin datos de IA: fallback conservador
+        return {"es_plaga": True, "plaga": "desconocida", "confianza": 0.4,
+                "motor": f"{tipo}_desconocido",
                 "razon": "medio sin clasificar, plaga desconocida"}
+
+    def _multimedia(self, rid, tipo, audio, foto, cultivo, etapa) -> dict:
+        """Lee el resultado multimodal de caché o llama a la IA (una sola vez)."""
+        cache_file = CACHE / "multimedia.json"
+        cache: dict = {}
+        if cache_file.exists():
+            cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        if rid and rid in cache and not cache[rid].get("error"):
+            return cache[rid]
+        if not self.con_ia:
+            return {"fuente": "ninguna"}
+        try:
+            from motor_audio_foto import procesar_reporte_multimedia
+
+            res = procesar_reporte_multimedia(
+                {"tipo": tipo, "audio_url": audio, "foto_url": foto}, cultivo or "", etapa or "",
+                candidatas=sorted(self.cultivares_compatibles(cultivo)),
+            )
+        except Exception as exc:  # pragma: no cover
+            return {"fuente": "ninguna", "error": str(exc)}
+        if rid and not res.get("error"):
+            cache[rid] = res
+            cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        return res
 
 
 def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
