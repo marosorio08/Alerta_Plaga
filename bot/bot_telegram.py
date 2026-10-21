@@ -59,6 +59,8 @@ REPORTES_BOT = CACHE / "reportes_bot.json"
 # ~/app/cache en el servidor). El bot la lee en CADA petición para estar al día.
 CASOS_BOT = Path(os.getenv("CASOS_SALIDA") or (CACHE / "casos_propuestos.json"))
 INCIDENTES = CACHE / "incidentes.json"
+# Cola de casos dudosos que la sesión revisa juntos antes de registrarlos.
+PENDIENTES_BOT = CACHE / "revision_pendiente.json"
 ZONA_MX = timezone(timedelta(hours=-6))
 
 
@@ -858,8 +860,59 @@ class BotTelegram:
             return f"Ups, error conversando: {exc}"
 
     # -------------------------------------------------------- botones (avisos)
+    # ---------------------------------------------------- visto bueno (brotes)
+    def _leer_pendientes(self) -> list[dict]:
+        try:
+            return json.loads(PENDIENTES_BOT.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _guardar_pendientes(self, pendientes: list[dict]) -> None:
+        try:
+            tmp = PENDIENTES_BOT.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(pendientes, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            tmp.replace(PENDIENTES_BOT)
+        except OSError as exc:
+            print(f"[telegram] no pude guardar pendientes: {exc}")
+
+    def _quitar_pendiente(self, rid: str) -> dict | None:
+        """Quita rid de la cola de dudosos y devuelve la entrada quitada."""
+        pendientes = self._leer_pendientes()
+        restante = [p for p in pendientes if p.get("reporte_id") != rid]
+        if len(restante) == len(pendientes):
+            return None
+        self._guardar_pendientes(restante)
+        return next(p for p in pendientes if p.get("reporte_id") == rid)
+
     def aprobar(self, reporte_id: str) -> str:
-        """✅ Aprobar: entrega el folio al productor (POST /avisos tipo folio)."""
+        """✅ Aprobar: si el caso está en la cola de dudosos, lo REGISTRA en
+        POST /casos (el visto bueno real, manda el payload propuesto). Si no
+        está en la cola, conserva el comportamiento de folio (POST /avisos).
+        """
+        pendiente = self._quitar_pendiente(reporte_id)
+        if pendiente:
+            caso = pendiente.get("caso") or {}
+            if not caso or not caso.get("reporte_id"):
+                return f"⚠️ {reporte_id} estaba en la cola pero sin payload; no se envió."
+            # Validación de seguridad: el visto bueno registra SOLO si la API
+            # confirma que todavía no está registrado.
+            try:
+                st = self.api.validar_caso(caso)
+                if isinstance(st, dict) and st.get("ya_registrado_antes"):
+                    return f"ℹ️ {reporte_id} ya estaba registrado en la API; no se reenvió."
+            except Exception as exc:
+                return f"⚠️ No pude validar {reporte_id}: {exc}"
+            try:
+                resp = self.api.registrar_caso(caso)
+            except Exception as exc:
+                return f"⚠️ No se pudo registrar {reporte_id}: {str(exc)[:200]}"
+            pts = "—"
+            if isinstance(resp, dict):
+                pts = resp.get("puntos", "—")
+            return (f"✅ {reporte_id} REGISTRADO con tu visto bueno "
+                    f"(brote: {caso.get('brote')}) · pts API: {pts}")
+        # caso normal: folio (comportamiento original)
         reporte = next((r for r in _leer_json("reportes", [])
                         if r.get("id") == reporte_id), None)
         para = [reporte.get("productor_id")] if reporte and reporte.get("productor_id") else []
@@ -913,7 +966,15 @@ class BotTelegram:
             return f"⚠️ No se pudo reasignar: {exc}"
 
     def falsa_alarma(self, reporte_id: str) -> str:
-        """🚫 Falsa alarma: avisa al productor que no parece plaga."""
+        """🚫 Revisar / Falsa alarma:
+        - Si el caso estaba en la cola de dudosos, solo se QUITA de la cola
+          (no se registra, no se manda aviso al productor): quedó revisado
+          con el coordinador y descartado.
+        - Si no estaba en la cola, conserva el comportamiento original
+          (aviso de falsa alarma por POST /avisos).
+        """
+        if self._quitar_pendiente(reporte_id):
+            return f"🚫 {reporte_id} retirado de la cola de dudosos (no se registró)."
         reporte = next((r for r in _leer_json("reportes", [])
                         if r.get("id") == reporte_id), None)
         para = [reporte.get("productor_id")] if reporte and reporte.get("productor_id") else []

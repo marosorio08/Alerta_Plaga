@@ -501,18 +501,26 @@ class Listener:
         guardar_json(ESTADO, self.estado)
 
     def _es_dudoso(self, detalle: dict, caso: dict) -> str | None:
-        """Devuelve el motivo si el caso merece revisión conjunta, o None."""
+        """Devuelve el motivo si el caso merece revisión conjunta, o None.
+
+        Regla de la sesión (21-oct, tarde, Rafa): TODO caso con ``brote=True``
+        se aparca SIEMPRE, sin importar la confianza, para evaluarlo juntos y
+        dar el visto bueno antes de registrarlo. Un brote mal marcado vale
+        -1 punto (MISA 100% vs nuestro ~92%), así que ninguna brote se manda
+        a ciegas.
+        """
         if not caso.get("es_plaga"):
             conf = detalle.get("confianza") or 0
             if float(conf) >= CONFIANZA_DUDOSA:
                 return None
         conf = float(detalle.get("confianza") or 0)
+        # 0) BROTE: siempre requiere visto bueno (regla de Rafa).
+        if caso.get("brote"):
+            return f"brote activo (evaluar juntos antes de registrar) · conf={conf:.2f}"
         if caso.get("plaga") == "desconocida":
             return "plaga desconocida (el motor no identificó qué plaga es)"
         if conf < CONFIANZA_DUDOSA:
             return f"confianza baja ({conf:.2f})"
-        if caso.get("brote") and conf < 0.75:
-            return "brote marcado con confianza media (revisar antes de enviar)"
         return None
 
     def _parkear_dudoso(self, reporte: dict, detalle: dict, caso: dict, motivo: str) -> None:
@@ -717,7 +725,7 @@ def main() -> None:
             import threading
             from resolver_cola import ResolverCola
 
-            resolver = ResolverCola(api=listener.api, telegram=False)
+            resolver = ResolverCola(api=listener.api, telegram=args.telegram)
             hilo = threading.Thread(target=resolver.correr, daemon=True, name="resolver-dudosos")
             hilo.start()
             print(f"[{ahora()}] resolver de dudosos activo (hilo {hilo.name})")

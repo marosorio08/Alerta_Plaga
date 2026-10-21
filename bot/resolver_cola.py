@@ -376,11 +376,16 @@ class ResolverCola:
         en POST /casos** — solo re-analiza cada dudoso con el flujo validado,
         deja una marca de auditoría en la bitácora y **deja el caso en la cola**
         para revisión humana. Nada se envía automáticamente a la API.
+
+        Desde el 21-oct 14:50 SÍ avisa por Telegram (si está activo) el resumen
+        de lo que quedó en la cola, para que Rafa y Emmanuel sepan que hay
+        casos esperando el visto bueno y no duerman en la cola como pasó.
         """
         cola = _leer_json(PENDIENTES, [])
         if not cola:
             return 0
         analizados = 0
+        revisiones: list[str] = []
         # No toca la cola: la conserva completa para que la gente decida.
         for pendiente in cola:
             rid = pendiente.get("reporte_id")
@@ -390,6 +395,15 @@ class ResolverCola:
             decision = resumen.get("estado")
             print(f"[resolver] {rid}: {decision} — {resumen.get('justificacion', '')[:120]}")
             analizados += 1
+            motivo = resumen.get("motivo") or pendiente.get("motivo") or ""
+            if decision in ("revision_humana", "pendiente"):
+                revisiones.append(f"  • {rid} — {str(motivo)[:60]}")
+        if revisiones:
+            cab = (f"🧠 <b>DUDOSOS EN ESPERA DE TU VISTO BUENO</b> "
+                   f"({len(revisiones)})\n")
+            pie = ("\nTe los dejo puestos en la cola: avísame en el bot "
+                   "(Revisar/Registrar) cómo los subimos.")
+            self._msg_telegram(cab + "\n".join(revisiones[:15]) + pie)
         return analizados
 
     def correr(self) -> None:
@@ -409,8 +423,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Analiza la cola de dudosos 7_7 (sin enviar)")
     parser.add_argument("--una-vez", action="store_true", help="Una pasada y sale")
     parser.add_argument("--intervalo", type=int, default=90)
+    parser.add_argument("--sin-telegram", action="store_true",
+                        help="No avisar por Telegram el resumen de la cola")
     args = parser.parse_args()
-    resolver = ResolverCola(telegram=False, intervalo=args.intervalo)
+    resolver = ResolverCola(telegram=not args.sin_telegram, intervalo=args.intervalo)
     if args.una_vez:
         n = resolver.revisar()
         print(f"[resolver] dudosos analizados en esta pasada: {n}")
