@@ -453,6 +453,17 @@ class Listener:
                 continue
             if reporte.get("respuesta_a"):
                 continue
+            # Si la API YA tiene este reporte registrado (por el flujo normal
+            # o por sesiones anteriores), no hay nada que hacer: marcarlo
+            # como enviado para que la reconcilación no lo re-procese y no lo
+            # aparque como falso dudoso (ruido tipo R-2001..R-2090).
+            try:
+                st = self.api.validar_caso(caso_para_api(caso))
+                if isinstance(st, dict) and st.get("ya_registrado_antes"):
+                    self.estado["enviados"].append(rid)
+                    continue
+            except Exception as exc:
+                print(f"[{ahora()}] aviso validando {rid} en reconciliación: {exc}")
             # Igual que en el flujo normal (FASE 3): los casos que el motor no
             # identifica bien NO se registran a ciegas — se aparcan para
             # revisión conjunta. Sin esto, la reconciliación enviaba textos
