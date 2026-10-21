@@ -894,8 +894,8 @@ Desde Windows, los mismos chequeos están automatizados en
 | `.env` | Credenciales (gitignored) |
 | `.gitignore` | Excluye `.env`, `cache/`, `MEMORIA_HACKATHON.md`, `curso_github/`, `gemini-extension/`, `node_modules/`, `.venv/`, `dist/` |
 | `MEMORIA_HACKATHON.md` | Contexto y credenciales (gitignored) |
+| `HISTORIA_DEL_PROYECTO.md` | Este documento (raíz: fácil de localizar) |
 | `docs/NIVEL2.md` | Diseño del Nivel 2 y guía de defensa |
-| `docs/HISTORIA_DEL_PROYECTO.md` | Este documento |
 
 ### `bot/` — motor
 
