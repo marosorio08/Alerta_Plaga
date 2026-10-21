@@ -95,6 +95,11 @@ class Listener:
         self.reportes_actuales: dict[str, dict] = {
             r["id"]: r for r in cargar_json(RAIZ / "cache" / "reportes.json", [])
         }
+        # El clasificador usa estas referencias para la ventana de 24 h y el
+        # brote; se actualizan en cada ciclo con los reportes frescos.
+        self.clf.reportes_actuales = self.reportes_actuales
+        self.clf.casos_actuales = self.casos
+        self._reportes_ids_cache: list[str] = []
         self.ultimo_refresco = time.time()
         self.nuevos_total = 0
         print(f"[{ahora()}] Supabase: {'conectado' if self.repo.activo else 'no configurado (solo caché local)'}")
@@ -118,6 +123,45 @@ class Listener:
             if reporte.get("id") == rid:
                 return reporte
         return None
+
+    def _cachear_reportes(self, reportes: list[dict]) -> None:
+        """Mantiene cache/reportes.json al día para las herramientas externas."""
+        ids = [r["id"] for r in reportes]
+        if ids == self._reportes_ids_cache:
+            return
+        try:
+            guardar_json(RAIZ / "cache" / "reportes.json", reportes)
+            self._reportes_ids_cache = ids
+        except Exception as exc:
+            print(f"[{ahora()}] no se pudo actualizar cache/reportes.json: {exc}")
+
+    def _reconstruir_enviados(self, reportes: list[dict]) -> None:
+        """Recrea en memoria los casos ya enviados que falten en la caché.
+
+        Sin esto, si `casos_propuestos.json` se pierde o el listener arranca
+        tarde, los casos enviados no cuentan como referencia para los brotes
+        de los mensajes siguientes. No reenvía nada: solo reconstruye el
+        historial local.
+        """
+        enviados = set(self.estado["enviados"])
+        if not enviados:
+            return
+        faltan = [
+            r for r in reportes
+            if r.get("id") in enviados
+            and not r.get("respuesta_a")
+            and r["id"] not in self.casos
+        ]
+        if not faltan:
+            return
+        faltan.sort(key=lambda r: (str(r.get("recibido") or ""), str(r.get("id") or "")))
+        for reporte in faltan:
+            detalle = self.procesar(reporte)
+            caso = detalle.get("caso", {k: detalle.get(k) for k in ("reporte_id", "es_plaga", "plaga", "urgente")})
+            if caso and caso.get("reporte_id"):
+                self.casos[caso["reporte_id"]] = caso
+                self._marcar_procesado(caso["reporte_id"])
+        print(f"[{ahora()}] reconstruidos {len(faltan)} caso(s) ya enviados para el historial de brote")
 
     @staticmethod
     def _fusionar_respuesta(padre: dict, respuesta: dict) -> dict:
@@ -230,8 +274,18 @@ class Listener:
                 self.casos.pop(reporte["id"], None)
                 if reporte["id"] not in aplicadas and reporte["id"] in self.estado["procesados"]:
                     self.estado["procesados"].remove(reporte["id"])
+
+        # Contexto fresco para la regla de seguimiento de 24 h y el brote.
+        self.clf.reportes_actuales = self.reportes_actuales
+        self.clf.casos_actuales = self.casos
+        self._cachear_reportes(reportes)
+        # Reconstruir casos ya enviados que falten en la caché local, para que
+        # cuenten en el historial de brote aunque no se reenvíen.
+        self._reconstruir_enviados(reportes)
+
         procesados = set(self.estado["procesados"])
         pendientes = [r for r in reportes if r["id"] not in procesados]
+        pendientes.sort(key=lambda r: (str(r.get("recibido") or ""), str(r.get("id") or "")))
         if not pendientes:
             # Sin reportes nuevos igual se refresca el brote en la caché
             # compartida y se registran los que hayan quedado pendientes.
@@ -356,14 +410,17 @@ class Listener:
         """
         if not self.enviar:
             return
+        self.clf.reportes_actuales = self.reportes_actuales
+        self.clf.casos_actuales = self.casos
         por_id = {r["id"]: r for r in reportes}
+        reportes_ordenados = sorted(
+            reportes, key=lambda r: (str(r.get("recibido") or ""), str(r.get("id") or ""))
+        )
 
-        for reporte in reportes:
+        for reporte in reportes_ordenados:
             if reporte.get("respuesta_a"):
                 continue
             rid = reporte["id"]
-            if rid in self.estado["enviados"]:
-                continue
             if rid in self.casos:
                 continue
             detalle = self.procesar(reporte)
@@ -469,7 +526,9 @@ class Listener:
             previos = self.api.get("casos-previos") or []
         except ApiError:
             return
-        reportes = {r["id"]: r for r in cargar_json(RAIZ / "cache" / "reportes.json", [])}
+        reportes = self.reportes_actuales or {
+            r["id"]: r for r in cargar_json(RAIZ / "cache" / "reportes.json", [])
+        }
         enriquecidos = []
         for caso in self.casos.values():
             reporte = reportes.get(caso["reporte_id"], {})

@@ -36,7 +36,7 @@ Aciertos por campo: es_plaga 99 · plaga 100 · semaforo 96 · tecnico 100 · **
 
 | # | Fallo real | Causa raíz | Fix (commit) |
 |---|---|---|---|
-| 1 | R-2043 brote ❌ | **Falso positivo**: el mismo productor (PR-191) reportó 3 veces en horas (R-2032/35/43) y sus propios casos disparaban brote | **Dedupe por productor** (`43e5495`): los casos propios del mismo productor cuentan una vez por brote; los previos NUNCA se deduplican |
+| 1 | R-2043 brote ❌ | **Falso positivo**: el mismo productor (PR-191) reportó 3 veces en horas (R-2032/35/43) y sus propios casos disparaban brote | **Seguimientos reales** (`PR #6`): solo se excluyen los seguimientos (mismo productor/parcela <24 h sin visita o `respuesta_a`); la regla NO deduplica por productor |
 | 2 | R-2056 es_plaga ❌ | **La IA sola** dijo "no plaga" en un texto de roya; las reglas acertaban | **Consenso Híbrido** (`d1a2202`): reglas+IA; si difieren → histórico; sin histórico → **mandan las REGLAS** |
 | 3 | R-2070/R-2073 brote ❌ | **Falso negativo (bug de orden)**: el listener calculaba brote con `resultados_a_casos([reporte])` — UN SOLO reporte — y `_recalcular_brotes` corría DESPUÉS del registro | **3 fases** (`8e486d5`): 1-clasificar todos → 2-recalcular brotes con el **conjunto COMPLETO** (previos + todos los casos propios) → 3-validar y registrar. **El brote NUNCA se decide con un solo reporte.** |
 | 4 | R-2071 sem/tec/brote +0 | Caso registrado solo con es_plaga+plaga; la API decía "todavía le pueden agregar: brote, semaforo, tecnico_id" | **Complemento** (`0744595`): reenviar POST /casos con los campos faltantes SUMA los puntos (+3 en R-2071 → 5/5) |
@@ -76,7 +76,7 @@ tecnico   = especialidad + carga<5 en MOMENTO=<recibido> + más cercano (haversi
 
 ### Paso 4 — Calcular el BROTE con el CONJUNTO COMPLETO ⚠️
 - **NUNCA** con un solo reporte (regresión R-2070).
-- Contar: previos + todos los casos propios, misma plaga, **<5 km**, ventana **168 h**, con dedupe por productor.
+- Contar: previos + todos los casos propios, misma plaga, **<5 km**, ventana **168 h**, excluyendo solo seguimientos reales (sin dedupe por productor).
 - Si el resultado difiere del que tenía el pendiente, anotarlo.
 
 ### Paso 5 — Consultar el estado real en la API (probe SEGURO)
@@ -161,6 +161,6 @@ python bot/estado_despliegue.py
 
 1. **Todo OK al corte 09:16** (292/314, 2.º, 3 pts de diferencia). La cola de dudosos está VACÍA.
 2. El flujo de verificación de la sección 3 es el que se usó para resolver R-2071/R-2075/R-2079 sin fallar.
-3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, dedupe por productor). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
+3. **Regla de oro del brote**: SIEMPRE conjunto completo (previos + propios, sin dedupe por productor; solo se excluyen seguimientos reales). Un caso con "brote" en la cola y muchos casos cercanos de la misma plaga normalmente es un brote real: verificar, no descartar.
 4. **Complemento**: si la API devuelve "todavía le pueden agregar: brote, semaforo, tecnico_id", esos son puntos recuperables (+3) si calculamos bien los campos con los datos que aporta el productor (respuestas `-R` dan parcela/pct).
 5. El repo: `marosorio08/Alerta_Plaga_Gusano` (privado). PRs 1-5 fusionados. La rama de Emmanuel (Caso_Emmanuel) quedó 33 commits atrás de main: necesita `git pull origin main` antes de cualquier PR nuevo (ya avisado por Telegram).

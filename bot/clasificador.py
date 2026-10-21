@@ -171,6 +171,11 @@ class Clasificador:
         self._historial: dict | None = None
         self._tecnicos_cache: dict[str, list] = {}
         self._visitas: set[str] | None = None
+        # Contexto en memoria que el listener actualiza en cada ciclo. Evita
+        # depender de cache/reportes.json (que puede estar viejo) para la
+        # regla de seguimiento de 24 h.
+        self.reportes_actuales: dict[str, dict] = {}
+        self.casos_actuales: dict[str, dict] | None = None
 
     def recargar_catalogo(self) -> None:
         """Vuelve a bajar /plagas, /parcelas, /casos-previos y /visitas.
@@ -696,15 +701,23 @@ class Clasificador:
             except Exception:
                 self._visitas = set()
         try:
-            todos = cargar_catalogo("reportes")
+            todos = self.reportes_actuales or cargar_catalogo("reportes")
         except Exception:
             todos = []
+        if isinstance(todos, dict):
+            todos = list(todos.values())
 
         limite = t_actual - timedelta(hours=24)
         candidatos = []
         for r in todos:
             if r.get("id") == reporte.get("id"):
                 continue
+            # Solo un caso de plaga realmente abierto puede ser padre de un
+            # seguimiento; un mensaje administrativo o un "no es plaga" no.
+            if self.casos_actuales is not None:
+                caso_padre = self.casos_actuales.get(r.get("id"))
+                if not caso_padre or not caso_padre.get("es_plaga"):
+                    continue
             mismo = ((parcela_id and r.get("parcela_id") == parcela_id)
                      or (productor_id and r.get("productor_id") == productor_id))
             if not mismo:
