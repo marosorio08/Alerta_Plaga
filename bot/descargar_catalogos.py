@@ -1,8 +1,9 @@
 """
 descargar_catalogos.py — Ingesta y caché local de los catálogos.
 
-Paso 1 del plan: baja /plagas, /parcelas, /productores y /tecnicos
-y los guarda en cache/ para que el clasificador trabaje sin red.
+Paso 1 del plan: baja /plagas, /parcelas, /productores, /tecnicos,
+/casos-previos y /visitas y los guarda en cache/ para que el clasificador
+trabaje sin red.
 
 Uso:
     python bot/descargar_catalogos.py [--reportes]
@@ -42,6 +43,10 @@ def main() -> None:
     guardar("parcelas", api.get_parcelas())
     guardar("productores", api.get_productores())
     guardar("tecnicos", api.get_tecnicos())
+    # Necesarios para el desempate histórico de brote y para detectar
+    # seguimientos reales (mismo productor/parcela <24 h sin visita).
+    guardar("cache_casos_previos", api.get_casos_previos())
+    guardar("visitas", api.get_visitas())
     if args.reportes:
         guardar("reportes", api.get_reportes())
 

@@ -102,6 +102,14 @@ class ApiCliente:
     def get_reportes(self) -> list:
         return self.get("reportes") or []
 
+    def get_casos_previos(self) -> list:
+        """Casos de la semana anterior con su respuesta correcta."""
+        return self.get("casos-previos") or []
+
+    def get_visitas(self) -> list:
+        """Visitas registradas por los técnicos (para seguimientos y plazos)."""
+        return self.get("visitas") or []
+
     def get_equipo(self) -> dict:
         return self.get("equipo") or {}
 

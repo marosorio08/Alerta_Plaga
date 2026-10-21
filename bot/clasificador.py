@@ -171,13 +171,21 @@ class Clasificador:
         self._historial: dict | None = None
         self._tecnicos_cache: dict[str, list] = {}
         self._visitas: set[str] | None = None
+        # Contexto en memoria que el listener actualiza en cada ciclo. Evita
+        # depender de cache/reportes.json (que puede estar viejo) para la
+        # regla de seguimiento de 24 h.
+        self.reportes_actuales: dict[str, dict] = {}
+        self.casos_actuales: dict[str, dict] | None = None
 
     def recargar_catalogo(self) -> None:
-        """Vuelve a bajar /plagas y /parcelas de la API.
+        """Vuelve a bajar /plagas, /parcelas, /casos-previos y /visitas.
 
         Si los organizadores agregan plagas, cultivos o cambian severidades,
-        el motor los adopta sin reiniciarse ni tocar código.
+        el motor los adopta sin reiniciarse ni tocar código. Los casos previos
+        alimentan el desempate histórico y el brote; las visitas permiten
+        distinguir un seguimiento real de un caso nuevo.
         """
+        CACHE.mkdir(parents=True, exist_ok=True)
         plagas = self.api.get_plagas()
         parcelas = self.api.get_parcelas()
         if plagas:
@@ -188,6 +196,26 @@ class Clasificador:
             (CACHE / "parcelas.json").write_text(
                 json.dumps(parcelas, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+
+        try:
+            previos = self.api.get_casos_previos()
+            (CACHE / "cache_casos_previos.json").write_text(
+                json.dumps(previos, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._historial = None
+        except Exception as exc:
+            print(f"[catalogo] no se pudieron actualizar los casos previos: {exc}")
+
+        try:
+            visitas = self.api.get_visitas()
+            (CACHE / "visitas.json").write_text(
+                json.dumps(visitas, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._visitas = {str(v.get("reporte_id")) for v in visitas if v.get("reporte_id")}
+        except Exception as exc:
+            print(f"[catalogo] no se pudieron actualizar las visitas: {exc}")
+
+        self._tecnicos_cache.clear()
 
     # ---------- herramientas de texto ----------
     @staticmethod
@@ -674,15 +702,23 @@ class Clasificador:
             except Exception:
                 self._visitas = set()
         try:
-            todos = cargar_catalogo("reportes")
+            todos = self.reportes_actuales or cargar_catalogo("reportes")
         except Exception:
             todos = []
+        if isinstance(todos, dict):
+            todos = list(todos.values())
 
         limite = t_actual - timedelta(hours=24)
         candidatos = []
         for r in todos:
             if r.get("id") == reporte.get("id"):
                 continue
+            # Solo un caso de plaga realmente abierto puede ser padre de un
+            # seguimiento; un mensaje administrativo o un "no es plaga" no.
+            if self.casos_actuales is not None:
+                caso_padre = self.casos_actuales.get(r.get("id"))
+                if not caso_padre or not caso_padre.get("es_plaga"):
+                    continue
             mismo = ((parcela_id and r.get("parcela_id") == parcela_id)
                      or (productor_id and r.get("productor_id") == productor_id))
             if not mismo:
