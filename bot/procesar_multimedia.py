@@ -32,6 +32,7 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("--reanudar", action="store_true", help="Saltar los ya procesados")
+    parser.add_argument("--pausa", type=float, default=1.5, help="Segundos entre llamadas (evita 429)")
     args = parser.parse_args()
 
     clf = Clasificador(con_ia=True)
@@ -63,6 +64,7 @@ def main() -> None:
             print(f"      vision: es_plaga={res.get('es_plaga_sugerida')} plaga={res.get('plaga_sugerida')} "
                   f"({res.get('confianza')}) {str(res.get('sintomas'))[:90]}")
         SALIDA.write_text(json.dumps(resultados, ensure_ascii=False, indent=2), encoding="utf-8")
+        time.sleep(args.pausa)
 
     print(f"\nTotal procesados: {len(resultados)} -> {SALIDA}")
 
