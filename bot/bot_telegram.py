@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente  # noqa: E402
 from clasificador import Clasificador  # noqa: E402
-from nivel2 import elegir_tecnico, extraer_pct  # noqa: E402
+from nivel2 import _a_datetime, elegir_tecnico, extraer_pct  # noqa: E402
 from motor_audio_foto import describir_foto_consenso, transcribir_con_consenso  # noqa: E402
 from supabase_repositorio import RepositorioSupabase  # noqa: E402
 
@@ -223,6 +223,73 @@ class BotTelegram:
                 numeros.append(int(rid[4:]))
         return f"BOT-{(max(numeros) if numeros else 0) + 1:04d}"
 
+    # ------------------------------------------- regla de 24 h (seguimiento)
+    def _buscar_reporte_abierto(self, chat_id: str, recibido_nuevo) -> dict | None:
+        """Reporte previo del MISMO usuario en las últimas 24 h (sin cerrar).
+
+        Regla del usuario: si vuelve a reportar en menos de 24 h, no se abre
+        caso nuevo: se anexa al existente y se le avisa que está en proceso.
+        Devuelve el registro anterior (más reciente) o None.
+        """
+        t_nuevo = _a_datetime(recibido_nuevo)
+        if t_nuevo is None:
+            return None
+        limite = t_nuevo - timedelta(hours=24)
+        candidatos = []
+        for r in self._reportes_bot:
+            if r.get("anexo_de"):
+                continue  # un anexo no abre ventana por sí solo
+            if str(r.get("prod_telegram")) != str(chat_id):
+                continue
+            t_r = _a_datetime(r.get("recibido"))
+            if t_r and limite <= t_r <= t_nuevo:
+                candidatos.append((t_r, r))
+        if not candidatos:
+            return None
+        candidatos.sort(key=lambda x: x[0], reverse=True)
+        return candidatos[0][1]
+
+    def _anexar_reporte(self, chat_id: str, existente: dict, datos: dict) -> str:
+        """Anexa el contenido nuevo al reporte existente (sin caso nuevo)."""
+        rid = existente.get("id") or "?"
+        ahora_iso = datetime.now(ZONA_MX).isoformat(timespec="seconds")
+        contenido_nuevo = " ".join(x for x in [datos.get("contenido"),
+                                               datos.get("confirmacion")] if x)
+        # anotación local de la anexión (historial del caso)
+        anexo = {
+            "anexo_de": rid,
+            "prod_telegram": chat_id,
+            "tipo": datos.get("tipo", "texto"),
+            "texto": contenido_nuevo,
+            "archivo": datos.get("archivo"),
+            "recibido": ahora_iso,
+            "parcela_id": datos.get("parcela_id"),
+        }
+        self._reportes_bot.append(anexo)
+        # el reporte original queda "marcado" como en seguimiento
+        existente["ultimo_seguimiento"] = ahora_iso
+        existente["seguimientos"] = (existente.get("seguimientos") or 0) + 1
+        self._guardar_reportes_bot()
+        try:
+            self._repo.guardar_caso({"reporte_id": rid, "caso": {
+                "reporte_id": rid, "es_plaga": bool(existente.get("es_plaga")),
+                "plaga": existente.get("plaga"),
+                "seguimiento": True, "ultimo_seguimiento": ahora_iso},
+                "seguimiento_de": rid})
+        except Exception as exc:
+            print(f"[telegram] Supabase (anexo {rid}): {exc}")
+        return rid
+
+    def _respuesta_24h(self, existente: dict, horas: float) -> str:
+        rid = existente.get("id") or "?"
+        estado = (f", semáforo <b>{existente.get('semaforo')}</b>"
+                  if existente.get("semaforo") else "")
+        return (f"📎 <b>Su petición ya está en proceso.</b>\n"
+                f"Usted ya realizó un reporte hace <b>{horas:.1f} h</b> "
+                f"(folio {_html(rid)}{estado}); por lo tanto <b>no se crea un "
+                f"reporte nuevo</b>: su información quedó anexada al caso "
+                f"existente. El equipo dará seguimiento con la misma numeración.")
+
     def _descargar_media(self, file_id: str, sufijo: str) -> Path | None:
         if not self.token:
             return None
@@ -344,6 +411,25 @@ class BotTelegram:
         if not datos.get("contenido") and not datos.get("vision"):
             self.enviar(chat_id, "⚠️ No entendí el contenido. Mándame texto, foto o nota de voz, o /cancelar.")
             return
+
+        # REGLA 24 h (solo en el flujo Telegram /añadir): si el MISMO usuario
+        # ya tiene un reporte abierto hace < 24 h, NO se abre caso nuevo: se
+        # anexa al existente y se le avisa que su petición está en proceso.
+        try:
+            ahora = datetime.now(ZONA_MX)
+            existente = self._buscar_reporte_abierto(
+                chat_id, ahora.isoformat(timespec="seconds"))
+            if existente:
+                rid = self._anexar_reporte(chat_id, existente, datos)
+                t_previo = _a_datetime(existente.get("recibido"))
+                horas = (max(0.0, (ahora - t_previo).total_seconds() / 3600)
+                         if t_previo else 0.0)
+                self.sesiones.pop(chat_id, None)
+                self.enviar(chat_id, self._respuesta_24h(existente, horas))
+                return
+        except Exception as exc:
+            print(f"[telegram] regla 24 h falló: {exc}")
+
         self._pregunta_cultivo(chat_id, sesion)
 
     def _procesar_respuesta(self, chat_id: str, texto: str) -> None:
@@ -372,7 +458,11 @@ class BotTelegram:
             self._clasificar_y_guardar(chat_id, sesion)
 
     def _clasificar_y_guardar(self, chat_id: str, sesion: dict) -> None:
-        """Clasifica con el motor del equipo, determina el estado y lo guarda."""
+        """Clasifica con el motor del equipo, determina el estado y lo guarda.
+
+        La regla de 24 h (anexar sin caso nuevo) ya se aplicó en
+        `_recibir_contenido`; aquí solo se guardan reportes NUEVOS.
+        """
         datos = sesion["datos"]
         try:
             self.enviar(chat_id, "⚖️ Clasificando con el reglamento del reto…")
