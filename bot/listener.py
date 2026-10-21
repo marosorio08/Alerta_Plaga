@@ -522,6 +522,10 @@ class Listener:
             return f"brote activo (evaluar juntos antes de registrar) · n={caso.get('_brote_n', '?')} · conf={conf:.2f}"
         if caso.get("_brote_dudoso"):
             return f"brote en el límite (n={caso.get('_brote_n', 2)}; no se envía brote hasta revisar)"
+        # Voz sin transcripción: no leímos el mensaje, así que no se registra a
+        # ciegas aunque la regla de cultivo exclusivo dé una plaga (R-2121).
+        if detalle.get("tipo") == "voz" and not str(detalle.get("texto") or "").strip():
+            return "voz sin transcripción (no se leyó el mensaje; revisar antes de enviar)"
         if caso.get("plaga") == "desconocida":
             return "plaga desconocida (el motor no identificó qué plaga es)"
         if conf < CONFIANZA_DUDOSA:
