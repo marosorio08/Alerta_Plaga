@@ -1,16 +1,17 @@
 """
 bot_telegram.py — Agente del bot de Telegram del equipo 7_7 (Alerta Plaga).
 
-Es el "coordinador digital" de la junta de sanidad vegetal. El coordinador real
-(integrante del equipo) conversa con este bot y recibe los casos rojo/naranja y
-los brotes con botones para aprobarlos, cambiar el técnico o marcarlos como
-falsa alarma.
+Es el "coordinador digital" de la junta de sanidad vegetal. El bot es PÚBLICO:
+cualquier productor puede escribirle, enviar reportes (texto, foto, voz o
+archivo) con el flujo "Añadir reporte" y consultar el estado de la campaña.
+El coordinador real (integrante del equipo) recibe las alertas rojo/naranja,
+los brotes (con botones) y los avisos de uso indebido del sistema.
 
 Cómo se enlaza con el programa:
-  * Lee los casos que ya calculó el listener (cache/casos_propuestos.json,
-    reportes.json, cache/visitas.json) y la API central (GET /equipo).
+  * Lee los casos que ya calculó el listener y la API central (GET /equipo).
   * Usa las mismas funciones del programa para actuar: POST /avisos (folio,
-    asignación, respuesta, brote, cuarentenaria, escalamiento).
+    asignación, respuesta, brote, cuarentenaria, escalamiento) y persistencia
+    local / Supabase.
   * Para el chat libre usa un LLM (OpenRouter) con el SYSTEM_PROMPT de abajo,
     que define la personalidad y las funciones a las que tiene acceso.
 
@@ -173,6 +174,7 @@ class BotTelegram:
         self._reportes_bot = self._leer_reportes_bot()
         self._cache_equipo: dict | None = None
         self._cache_equipo_ts: float = 0.0
+        self._ultimo_msg: dict[str, float] = {}  # anti-duplicado por chat
 
     # ---------------------------------------------------------- Telegram API
     def _llamar(self, metodo: str, datos: dict, timeout: int = 25) -> dict | None:
@@ -788,12 +790,16 @@ class BotTelegram:
         if not chat_id or not (texto or msg.get("photo") or msg.get("voice")
                                or msg.get("audio") or msg.get("document")):
             return
-        if str(chat_id) != self.chat_id and not os.getenv("TELEGRAM_MODO_DEMO"):
-            # Solo responde al coordinador (salvo demostración explícita)
-            self.enviar(str(chat_id), "🚫 Solo el coordinador del equipo puede hablar conmigo.")
-            return
-
         cid = str(chat_id)
+
+        # El bot es PÚBLICO: cualquier productor puede hablarle. Anti-duplicado
+        # para no repetir trabajo si Telegram reenvía el mismo mensaje.
+        ahora_ms = time.time() * 1000
+        ultimo = self._ultimo_msg.get(cid, 0)
+        if ahora_ms - ultimo < 1200:
+            return
+        self._ultimo_msg[cid] = ahora_ms
+
         sesion = self.sesiones.get(cid)
 
         # flujo "Añadir reporte": primero el contenido (texto o media)
@@ -869,7 +875,7 @@ class BotTelegram:
         return len(updates)
 
     def correr(self, una_vez: bool = False) -> None:
-        print(f"[telegram] bot activo | seco={self.seco} | coordinador={self.chat_id}")
+        print(f"[telegram] bot activo | seco={self.seco} | modo=PÚBLICO | coordinador={self.chat_id}")
         while True:
             try:
                 n = self.ciclo()
