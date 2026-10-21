@@ -453,8 +453,19 @@ class Listener:
                 continue
             if reporte.get("respuesta_a"):
                 continue
+            # Igual que en el flujo normal (FASE 3): los casos que el motor no
+            # identifica bien NO se registran a ciegas — se aparcan para
+            # revisión conjunta. Sin esto, la reconciliación enviaba textos
+            # vagos ("Algo le está pasando a mi siembra") con plaga
+            # "desconocida" que la API no puntúa en algunos cultivos
+            # (regresión real R-2097, frijol: plaga quedó null y perdió +1).
+            detalle = {"texto": reporte.get("texto") or "", "confianza": caso.get("confianza") or 0}
+            motivo = self._es_dudoso(detalle, caso)
+            if motivo:
+                self._parkear_dudoso(reporte, detalle, caso, motivo)
+                continue
             if self._registrar_caso(reporte, caso):
-                self.acciones_extra(reporte, {"texto": "", "confianza": caso.get("confianza") or 0}, caso)
+                self.acciones_extra(reporte, detalle, caso)
 
     def _recalcular_brotes(self, reportes_por_id: dict) -> None:
         """Reaplica la regla de brote sobre el conjunto completo de casos."""
