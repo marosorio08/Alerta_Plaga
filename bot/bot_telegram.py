@@ -175,6 +175,30 @@ class BotTelegram:
         self._cache_equipo: dict | None = None
         self._cache_equipo_ts: float = 0.0
         self._ultimo_msg: dict[str, float] = {}  # anti-duplicado por chat
+        self._sesiones_file = CACHE / "sesiones.json"
+        self.sesiones = self._cargar_sesiones()  # sobrevive a reinicios/deploys
+
+    def _cargar_sesiones(self) -> dict:
+        try:
+            datos = json.loads(self._sesiones_file.read_text(encoding="utf-8"))
+            return {str(k): v for k, v in datos.items()
+                    if v.get("estado") in ("contenido", "q_sintomas",
+                                           "q_caracteristicas", "q_datos")}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _guardar_sesiones(self) -> None:
+        try:
+            tmp = self._sesiones_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.sesiones, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            tmp.replace(self._sesiones_file)
+        except OSError as exc:
+            print(f"[telegram] no pude guardar sesiones.json: {exc}")
+
+    def _cerrar_sesion(self, chat_id: str) -> None:
+        self.sesiones.pop(chat_id, None)
+        self._guardar_sesiones()
 
     # ---------------------------------------------------------- Telegram API
     def _llamar(self, metodo: str, datos: dict, timeout: int = 25) -> dict | None:
@@ -339,33 +363,68 @@ class BotTelegram:
 
     def iniciar_reporte(self, chat_id: str) -> None:
         self.sesiones[chat_id] = {"estado": "contenido", "datos": {}}
+        self._guardar_sesiones()
         self.enviar(chat_id,
                     "📝 <b>Nuevo reporte</b>\n"
                     "Mándame lo que tienes: un <b>mensaje de texto</b>, una <b>foto 📷</b>, "
                     "una <b>nota de voz 🎙️</b> o un <b>archivo 📎</b> (jpg/png/ogg).\n"
                     "Escribe /cancelar para salir.")
 
-    def _pregunta_cultivo(self, chat_id: str, sesion: dict) -> None:
-        sesion["estado"] = "q_cultivo"
+    def _pregunta_sintomas(self, chat_id: str, sesion: dict) -> None:
+        sesion["estado"] = "q_sintomas"
+        self._guardar_sesiones()
         self.enviar(chat_id,
-                    "📍 <b>Pregunta 1/3 — cultivo.</b>\n"
-                    "¿De qué cultivo o parcela es? (ej. maíz, frijol, limón, papa… "
-                    "o el código P-000 de tu parcela).\n"
-                    "Si no sabes, escribe «no sé».")
+                    "🔍 <b>Pregunta 1/2 — Síntomas.</b>\n"
+                    "¿Qué síntomas o daños observaste en la planta y en qué parte "
+                    "aparecen?\n\n"
+                    "Por ejemplo: hojas amarillas, agujeros, manchas cafés, hojas "
+                    "enrolladas, mordeduras, presencia de insectos, polvo "
+                    "anaranjado, frutos dañados o raíces afectadas.")
 
-    def _pregunta_pct(self, chat_id: str, sesion: dict) -> None:
-        sesion["estado"] = "q_pct"
+    def _pregunta_caracteristicas(self, chat_id: str, sesion: dict) -> None:
+        sesion["estado"] = "q_caracteristicas"
+        self._guardar_sesiones()
         self.enviar(chat_id,
-                    "📏 <b>Pregunta 2/3 — qué tanto.</b>\n"
-                    "¿Qué parte de la parcela está afectada? (ej. «la mitad», «30 %», "
-                    "«una cuarta parte», «casi todo»)")
+                    "🔬 <b>Pregunta 2/2 — Características.</b>\n"
+                    "¿Qué características adicionales observaste en la planta "
+                    "afectada, como presencia de <b>insectos, larvas, huevos</b>, "
+                    "manchas con alguna forma o color particular, deformaciones o "
+                    "cambios en los frutos?")
 
-    def _pregunta_confirmar(self, chat_id: str, sesion: dict) -> None:
-        sesion["estado"] = "q_confirmar"
-        self.enviar(chat_id,
-                    "🔍 <b>Pregunta 3/3 — confirmación.</b>\n"
-                    "Para confirmar que es plaga: ¿ves <b>insectos, manchas, hojas "
-                    "comidas o la planta marchita</b>? ¿Desde cuándo lo notas?")
+    def _pregunta_datos(self, chat_id: str, sesion: dict) -> None:
+        """Pide parcela/ubicación SÓLO si antes no se mencionó.
+
+        Si ya se conoce la PARCELA (que trae cultivo, superficie, etapa y
+        coordenadas), salta directo a clasificar. Si solo se conoce el cultivo,
+        pregunta únicamente por la parcela.
+        """
+        datos = sesion.get("datos", {})
+        conj = " ".join([datos.get("contenido") or "", datos.get("sintomas") or "",
+                         datos.get("caracteristicas") or ""])
+        cultivo = datos.get("cultivo") or self._cultivo_de_texto(conj)
+        if datos.get("parcela_id"):
+            if not datos.get("cultivo"):
+                datos["cultivo"] = cultivo
+            sesion["estado"] = "q_datos"
+            self._guardar_sesiones()
+            self._clasificar_y_guardar(chat_id, sesion)
+            return
+        sesion["estado"] = "q_datos"
+        if cultivo:
+            datos["cultivo"] = cultivo
+            self._guardar_sesiones()
+            self.enviar(chat_id,
+                        "📍 <b>Un dato más para asignarle técnico y zona:</b>\n"
+                        "¿Me darías la <b>ubicación o parcela</b>? (ej. «la milpa de "
+                        "la base», «frijolar P-053»).\n"
+                        "Si no la sabes, escribe «no sé».")
+        else:
+            self._guardar_sesiones()
+            self.enviar(chat_id,
+                        "📍 <b>Y un dato más para asignarle técnico y zona:</b>\n"
+                        "¿Dónde está la parcela o qué cultivo es? (ej. «la milpa de "
+                        "la base», «frijolar P-053», «maíz»).\n"
+                        "Si no lo sabes, escribe «no sé».")
 
     def _recibir_contenido(self, chat_id: str, msg: dict) -> None:
         """Guarda el contenido (texto/media) del reporte y arranca las preguntas."""
@@ -424,13 +483,14 @@ class BotTelegram:
                 t_previo = _a_datetime(existente.get("recibido"))
                 horas = (max(0.0, (ahora - t_previo).total_seconds() / 3600)
                          if t_previo else 0.0)
-                self.sesiones.pop(chat_id, None)
+                self._cerrar_sesion(chat_id)
                 self.enviar(chat_id, self._respuesta_24h(existente, horas))
                 return
         except Exception as exc:
             print(f"[telegram] regla 24 h falló: {exc}")
 
-        self._pregunta_cultivo(chat_id, sesion)
+        self._guardar_sesiones()
+        self._pregunta_sintomas(chat_id, sesion)
 
     def _procesar_respuesta(self, chat_id: str, texto: str) -> None:
         sesion = self.sesiones.get(chat_id)
@@ -438,23 +498,23 @@ class BotTelegram:
             return
         datos = sesion["datos"]
         estado = sesion["estado"]
-        t = texto.strip().lower()
 
-        if estado == "q_cultivo":
-            if t in ("no se", "no sé", "no", "no lo se", "no lo sé"):
-                datos["cultivo"], datos["parcela_id"] = None, None
-            else:
-                datos["parcela_id"] = self._parcela_de_texto(texto)
-                datos["cultivo"] = (None if datos.get("parcela_id")
-                                   else self._cultivo_de_texto(texto))
-            self._pregunta_pct(chat_id, sesion)
+        if estado == "q_sintomas":
+            datos["sintomas"] = texto.strip()
+            self._pregunta_caracteristicas(chat_id, sesion)
 
-        elif estado == "q_pct":
-            datos["pct"] = extraer_pct(texto)
-            self._pregunta_confirmar(chat_id, sesion)
+        elif estado == "q_caracteristicas":
+            datos["caracteristicas"] = texto.strip()
+            self._pregunta_datos(chat_id, sesion)
 
-        elif estado == "q_confirmar":
-            datos["confirmacion"] = texto.strip()
+        elif estado == "q_datos":
+            datos["respuesta_datos"] = texto.strip()
+            t = texto.strip().lower()
+            if t not in ("no se", "no sé", "no", "no lo se", "no lo sé"):
+                datos["parcela_id"] = (self._parcela_de_texto(texto) or datos.get("parcela_id"))
+                if not datos.get("parcela_id"):
+                    datos["cultivo"] = (self._cultivo_de_texto(texto) or datos.get("cultivo"))
+            self._guardar_sesiones()
             self._clasificar_y_guardar(chat_id, sesion)
 
     def _clasificar_y_guardar(self, chat_id: str, sesion: dict) -> None:
@@ -466,11 +526,17 @@ class BotTelegram:
         datos = sesion["datos"]
         try:
             self.enviar(chat_id, "⚖️ Clasificando con el reglamento del reto…")
-            parcela_id = datos.get("parcela_id")
+            texto_final = " ".join(x for x in [datos.get("contenido"),
+                                               datos.get("sintomas"),
+                                               datos.get("caracteristicas"),
+                                               datos.get("respuesta_datos")] if x)
+            parcela_id = datos.get("parcela_id") or self._parcela_de_texto(
+                " ".join([datos.get("contenido") or "", datos.get("sintomas") or "",
+                          datos.get("caracteristicas") or ""]))
             cultivo = (datos.get("cultivo")
                        or self._clf.cultivo_de_parcela(parcela_id)
-                       or self._clf.inferir_cultivo(self._clf.normalizar(datos.get("contenido") or "")))
-            texto_final = " ".join(x for x in [datos.get("contenido"), datos.get("confirmacion")] if x)
+                       or self._clf.inferir_cultivo(self._clf.normalizar(texto_final))
+                       or self._cultivo_de_texto(texto_final))
 
             # decisión de plaga: IA (paso 2, si está activada) o reglas → visión/fusión
             es_plaga, plaga, motor = False, None, "texto"
@@ -491,12 +557,18 @@ class BotTelegram:
                 plaga = "desconocida"
 
             rid = self._nuevo_rid()
-            ahora = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+            ahora = datetime.now(ZONA_MX).isoformat(timespec="seconds")
             caso = {"reporte_id": rid, "es_plaga": True if es_plaga else False,
                     "plaga": plaga if es_plaga else None,
                     "seguimiento_de": None,
                     "urgente": False, "_motor": motor}
-            pct = datos.get("pct") or 10
+            # El porcentaje: lo interpreta la IA o se extrae del texto (10 por omisión)
+            pct = res_texto.get("pct_ia")
+            if pct is None:
+                try:
+                    pct = extraer_pct(texto_final)
+                except Exception:
+                    pct = 10
 
             # Nivel 2 (prioridad, semáforo, técnico) si hay parcela y plaga
             respuesta = None
@@ -535,7 +607,9 @@ class BotTelegram:
                 "recibido": ahora, "es_plaga": es_plaga, "plaga": plaga,
                 "semaforo": caso.get("semaforo"), "tecnico_id": caso.get("tecnico_id"),
                 "prioridad": caso.get("prioridad"), "brote": caso.get("brote"),
-                "motor": motor, "confirmacion": datos.get("confirmacion"),
+                "motor": motor, "confirmacion": datos.get("sintomas"),
+                "sintomas": datos.get("sintomas"),
+                "caracteristicas": datos.get("caracteristicas"),
                 "validacion_api": respuesta,
             }
             self._reportes_bot.append(registro)
@@ -567,7 +641,7 @@ class BotTelegram:
             traceback.print_exc()
             self.enviar(chat_id, f"⚠️ Fallé al clasificar: {exc}")
         finally:
-            self.sesiones.pop(chat_id, None)
+            self._cerrar_sesion(chat_id)
 
     def _cargar_offset(self) -> int:
         try:
@@ -691,7 +765,8 @@ class BotTelegram:
         if t.startswith("/ayuda") or t in ("ayuda", "que haces", "qué haces", "que puedes hacer"):
             return ("🤖 Comandos: /añadir · /estado · /urgentes · /brotes · /plagas · /reportes · /ayuda.\n"
                     "Con /añadir registras un reporte (texto, foto, voz o archivo) y "
-                    "te hago 3 preguntas para confirmar plaga y calcular su estado.\n"
+                    "te hago 2 preguntas de diagnóstico (síntomas y características) y pido el "
+                    "dato de la parcela si falta, para calcular el estado de su reporte.\n"
                     "También puedes escribirme en lenguaje natural y te respondo "
                     "con los datos del programa.")
         return ""
@@ -897,10 +972,10 @@ class BotTelegram:
         if sesion and sesion.get("estado") == "contenido":
             self._recibir_contenido(cid, msg)
             return
-        # flujo "Añadir reporte": respuestas a las preguntas filtro
-        if sesion and sesion.get("estado") in ("q_cultivo", "q_pct", "q_confirmar"):
+        # flujo "Añadir reporte": respuestas a las preguntas diagnóstico
+        if sesion and sesion.get("estado") in ("q_sintomas", "q_caracteristicas", "q_datos"):
             if texto.strip().lower() == "/cancelar":
-                self.sesiones.pop(cid, None)
+                self._cerrar_sesion(cid)
                 self.enviar(cid, "Reporte cancelado.")
                 return
             self._procesar_respuesta(cid, texto)
@@ -913,7 +988,7 @@ class BotTelegram:
                 self.iniciar_reporte(cid)
                 return
             if comando == "/cancelar":
-                self.sesiones.pop(cid, None)
+                self._cerrar_sesion(cid)
                 self.enviar(cid, "Listo, nada en curso.")
                 return
             if comando.startswith("/"):
