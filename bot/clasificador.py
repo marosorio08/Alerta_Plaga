@@ -842,67 +842,144 @@ class Clasificador:
 
     # ---------- 9. Brote (regla global, sin IA) ----------
     def evaluar_brotes(self, casos: list[dict], reportes_por_id: dict,
-                       previos: list | None = None) -> dict[str, dict]:
+                       previos: list | None = None,
+                       confirmados: dict[str, dict] | None = None,
+                       descartados: set[str] | None = None,
+                       dedupe_por_parcela: bool = False,
+                       sin_dedupe: bool = False) -> dict[str, dict]:
         """Evalúa la regla de brote y devuelve ``{reporte_id: {brote, n, refs}}``.
 
         Regla (sección 9 del reto): hay brote si, contando el caso actual, hay
         3+ casos de la misma plaga a menos de 5 km recibidos en los últimos
         7 días (168 h, incluido el momento del mensaje). Cuentan los casos de
-        GET /casos-previos y los casos propios encontrados por el sistema.
-        No cuentan los seguimientos, los mensajes que no son reportes ni los
-        que quedaron como "desconocida". La hora es la `recibido` del mensaje.
+        GET /casos-previos y los casos propios que la API ya confirmó.
 
-        Refinamiento anti-falso-brote (cluster 24 h): los casos PROPIOS de un
-        mismo productor se agrupan con ventana de 24 h — si reporta el mismo
-        problema varias veces en horas, cuentan como UN caso (evita el falso
-        positivo R-2043); si vuelve a reportar con más de 24 h de diferencia,
-        es un evento nuevo y cuenta por separado (permite el brote TRUE de
-        R-2084, donde R-2014 y R-2084 del mismo productor/parcela separados
-        por 2 días sí suman). Los /casos-previos nunca se deduplican.
+        Fuente de verdad:
+          * ``confirmados`` (recomendado en producción): ledger inmutable de
+            casos aceptados por POST /casos (201/409). Solo esos casos propios
+            cuentan como referencia. Los aparcados, rechazados o propuestos
+            nunca inflan un brote.
+          * ``confirmados=None``: comportamiento histórico (todos los ``casos``
+            cuentan). Se conserva para replay y compatibilidad.
+
+        ``descartados`` excluye falsas alarmas aunque estén en el ledger.
+        ``sin_dedupe`` y ``dedupe_por_parcela`` permiten comparar variantes
+        sin tocar el comportamiento por defecto (dedupe por productor 24 h).
 
         Si un caso no tiene parcela con coordenadas o plaga aclarada, queda
         fuera del resultado (no se manda el campo, no se califica).
         """
         if previos is None:
             previos = cargar_previos()
-        referencias: list[dict] = [
+        descartados = {str(rid) for rid in (descartados or set())}
+
+        referencias_previas: list[dict] = [
             {"rid": p.get("reporte_id"), "plaga": p["plaga"],
              "lat": p["lat"], "lon": p["lon"],
              "recibido": p.get("recibido"), "propio": False,
-             "prod": p.get("productor_id")}
+             "prod": p.get("productor_id"),
+             "parcela_id": p.get("parcela_id"),
+             "productor_id": p.get("productor_id"),
+             "fuente": "previo"}
             for p in previos
             if p.get("plaga") and p.get("plaga") != "desconocida"
             and p.get("lat") is not None and p.get("lon") is not None
+            and str(p.get("reporte_id")) not in descartados
         ]
 
+        # Casos propios que ya están confirmados por la API (datos congelados).
+        referencias_confirmadas: dict[str, dict] = {}
+        if confirmados is not None:
+            for ref in confirmados.values():
+                rid = str(ref.get("reporte_id") or "")
+                if not rid or rid in descartados:
+                    continue
+                if ref.get("descartado") or not ref.get("es_plaga", True):
+                    continue
+                if ref.get("seguimiento_de"):
+                    continue  # un seguimiento confirmado no abre caso nuevo
+                if (not ref.get("plaga") or ref["plaga"] == "desconocida"
+                        or ref.get("lat") is None or ref.get("lon") is None):
+                    continue
+                referencias_confirmadas[rid] = {
+                    "rid": rid,
+                    "plaga": ref["plaga"],
+                    "lat": ref["lat"],
+                    "lon": ref["lon"],
+                    "recibido": ref.get("recibido"),
+                    "propio": True,
+                    "prod": ref.get("productor_id") or ref.get("prod"),
+                    "parcela_id": ref.get("parcela_id"),
+                    "productor_id": ref.get("productor_id") or ref.get("prod"),
+                    "fuente": "confirmado",
+                }
+
+        # Casos que se están evaluando ahora (lote nuevo o el caso actual).
         elegibles: list[dict] = []
         for c in casos:
+            rid = str(c.get("reporte_id") or "")
+            if not rid or rid in descartados or c.get("descartado"):
+                continue
             if not (c.get("es_plaga") and c.get("plaga")
                     and c.get("plaga") != "desconocida"):
                 continue
             if c.get("seguimiento_de"):
                 continue  # los seguimientos no cuentan para el brote
-            r = reportes_por_id.get(c["reporte_id"]) or {}
+            r = reportes_por_id.get(rid) or {}
             if r.get("respuesta_a"):
                 continue
-            parcela = self.parcelas.get(r.get("parcela_id") or "")
+            parcela_id = (r.get("parcela_id") or c.get("parcela_id")
+                          or c.get("_parcela_inferida"))
+            parcela = self.parcelas.get(parcela_id or "")
             if not parcela:
                 continue
             try:
                 lat, lon = float(parcela["lat"]), float(parcela["lon"])
             except (KeyError, TypeError, ValueError):
                 continue
-            referencia = {"rid": c["reporte_id"], "plaga": c["plaga"],
-                          "lat": lat, "lon": lon, "recibido": r.get("recibido"),
-                          "propio": True, "prod": r.get("productor_id")}
-            referencias.append(referencia)
-            elegibles.append(referencia)
+            elegibles.append({
+                "rid": rid,
+                "plaga": c["plaga"],
+                "lat": lat,
+                "lon": lon,
+                "recibido": r.get("recibido") or c.get("recibido"),
+                "propio": True,
+                "prod": r.get("productor_id") or c.get("productor_id"),
+                "parcela_id": parcela_id,
+                "productor_id": r.get("productor_id") or c.get("productor_id"),
+                "fuente": "propuesto",
+            })
+
+        # Referencias para el conteo. En modo ledger solo entran previos +
+        # confirmados + los casos que se evalúan ahora. Un caso confirmado usa
+        # sus datos congelados, no la clasificación actual.
+        refs_por_rid: dict[str, dict] = {}
+        for ref in referencias_previas:
+            refs_por_rid[str(ref["rid"])] = ref
+        for rid, ref in referencias_confirmadas.items():
+            refs_por_rid[rid] = ref
+        for ref in elegibles:
+            if confirmados is not None and ref["rid"] in referencias_confirmadas:
+                continue
+            refs_por_rid[ref["rid"]] = ref
+        referencias = list(refs_por_rid.values())
+
+        if sin_dedupe:
+            modo = "sin_dedupe"
+        elif dedupe_por_parcela:
+            modo = "parcela_24h"
+        elif confirmados is None:
+            modo = "propuestos_productor_24h"
+        else:
+            modo = "confirmados_productor_24h"
 
         resultado: dict[str, dict] = {}
         for e in elegibles:
-            n = contar_casos_cercanos(e["plaga"], e["lat"], e["lon"],
-                                      e["recibido"], referencias,
-                                      dedupe_productor_propios=True)
+            n = contar_casos_cercanos(
+                e["plaga"], e["lat"], e["lon"], e["recibido"], referencias,
+                dedupe_productor_propios=not sin_dedupe,
+                dedupe_por_parcela=dedupe_por_parcela,
+            )
             refs: list[dict] = []
             t_ref = _a_datetime(e.get("recibido"))
             if t_ref is not None:
@@ -920,13 +997,17 @@ class Clasificador:
                     tx = _a_datetime(x.get("recibido"))
                     if tx is None or not (limite <= tx <= t_ref):
                         continue
+                    horas = round((t_ref - tx).total_seconds() / 3600.0, 1)
                     refs.append({
                         "reporte_id": x.get("rid"),
                         "plaga": x["plaga"],
                         "recibido": x.get("recibido"),
                         "distancia_km": round(d, 2),
+                        "horas": horas,
                         "propio": bool(x.get("propio")),
+                        "fuente": x.get("fuente"),
                         "productor_id": x.get("prod"),
+                        "parcela_id": x.get("parcela_id"),
                         "es_actual": x.get("rid") == e["rid"],
                     })
             refs.sort(key=lambda z: (not z["es_actual"], z["distancia_km"]))
@@ -934,6 +1015,8 @@ class Clasificador:
                 "brote": n >= MINIMO_CASOS_BROTE,
                 "n": n,
                 "refs": refs,
+                "modo": modo,
+                "confirmados": confirmados is not None,
             }
         return resultado
 

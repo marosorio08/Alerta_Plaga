@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente  # noqa: E402
 from clasificador import Clasificador, caso_para_api, decidir_brote, resultados_a_casos  # noqa: E402
+from confirmados import cargar_confirmados, cargar_descartados  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
@@ -78,9 +79,13 @@ def main() -> int:
 
     res = clf.clasificar_reporte(reporte)
     caso = resultados_a_casos([reporte], clf)[0]
-    # El brote se recalcula con el conjunto completo (previos + propios).
+    # El brote se recalcula contra previos + casos confirmados por la API.
     casos_cache[reporte["id"]] = caso
-    detalles = clf.evaluar_brotes(list(casos_cache.values()), por_id)
+    ledger = cargar_confirmados()
+    detalles = clf.evaluar_brotes(
+        [caso], por_id, descartados=cargar_descartados(),
+        **({"confirmados": ledger} if ledger else {}),
+    )
     info = detalles.get(reporte["id"], {"n": None, "refs": [], "brote": False})
     decision = decidir_brote(info.get("n"))
     if decision is None:

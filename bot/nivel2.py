@@ -268,7 +268,8 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
                           radio_km: float = RADIO_BROTE_KM,
                           ventana_horas: float = VENTANA_BROTE_HORAS,
                           dedupe_productor_propios: bool = True,
-                          ventana_dedupe_horas: float = 24.0) -> int:
+                          ventana_dedupe_horas: float = 24.0,
+                          dedupe_por_parcela: bool = False) -> int:
     """Cuenta los casos de la misma plaga a menos de `radio_km` que llegaron
     entre `recibido - ventana_horas` y `recibido` (inclusive).
 
@@ -290,15 +291,21 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
       - R-2014 -> R-2084 (mismo PR-291, misma parcela, 2 días después) -> 2
         eventos (permite el brote TRUE que exige la API en R-2084).
     Los /casos-previos (propio=False) NUNCA se deduplican.
+
+    `dedupe_por_parcela=True` (variante conservadora): solo se agrupan casos
+    propios del MISMO productor y la MISMA parcela dentro de la ventana. Así
+    no se fusionan dos parcelas distintas del mismo productor. Si falta la
+    parcela, el caso cuenta por separado (no se puede probar que sea el mismo
+    evento).
     """
     t_ref = _a_datetime(recibido)
     if t_ref is None or lat is None or lon is None:
         return 0
     limite = t_ref - timedelta(hours=ventana_horas)
 
-    # Separamos previos (siempre cuentan de a uno) y propios (por productor).
+    # Separamos previos (siempre cuentan de a uno) y propios (por clave).
     previos_n = 0
-    propios_por_prod: dict[str | None, list] = {}
+    propios_por_clave: dict[object, list] = {}
     for ref in referencias:
         if ref.get("plaga") != plaga:
             continue
@@ -316,14 +323,21 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
             continue
         if limite <= t_otro <= t_ref:
             if dedupe_productor_propios and ref.get("propio"):
-                prod = ref.get("prod")
-                propios_por_prod.setdefault(prod, []).append(t_otro)
+                prod = ref.get("prod") or ref.get("productor_id")
+                parcela = ref.get("parcela_id")
+                if dedupe_por_parcela and parcela is None:
+                    # Sin parcela no se puede afirmar que sea el mismo evento.
+                    previos_n += 1
+                    continue
+                clave = (prod, parcela) if dedupe_por_parcela else prod
+                propios_por_clave.setdefault(clave, []).append(t_otro)
                 # `prod` None: se agrupa bajo None y se cuentan de a uno.
             else:
                 previos_n += 1
 
     clusters = 0
-    for prod, momentos in propios_por_prod.items():
+    for clave, momentos in propios_por_clave.items():
+        prod = clave[0] if isinstance(clave, tuple) else clave
         if prod is None:
             # Sin productor identificable: no se puede deduplicar.
             clusters += len(momentos)

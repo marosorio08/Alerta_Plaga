@@ -46,7 +46,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente  # noqa: E402
 from clasificador import Clasificador, caso_para_api  # noqa: E402
-from nivel2 import _a_datetime, elegir_tecnico, extraer_pct  # noqa: E402
+from confirmados import (  # noqa: E402
+    cargar_confirmados, cargar_descartados, confirmar, guardar_confirmados,
+    marcar_descartado, reactivar_descartado,
+)
+from nivel2 import _a_datetime, decidir_brote, elegir_tecnico, extraer_pct  # noqa: E402
 from motor_audio_foto import describir_foto_consenso, transcribir_con_consenso  # noqa: E402
 from supabase_repositorio import RepositorioSupabase  # noqa: E402
 
@@ -179,6 +183,56 @@ class BotTelegram:
         self._ultimo_msg: dict[str, float] = {}  # anti-duplicado por chat
         self._sesiones_file = CACHE / "sesiones.json"
         self.sesiones = self._cargar_sesiones()  # sobrevive a reinicios/deploys
+        # Ledger de brotes: solo cuentan casos confirmados por la API.
+        self._confirmados = cargar_confirmados()
+        self._descartados = cargar_descartados()
+
+    def _brote_actual(self, caso: dict, reporte: dict | None) -> dict | None:
+        """Evalúa el brote del caso con el ledger confirmado más reciente.
+
+        El bot corre en otro proceso: relee el ledger en cada llamada para no
+        usar un payload viejo de la cola. Si todavía no existe ledger, cae al
+        comportamiento histórico (previos + casos locales) para no subestimar.
+        """
+        rid = str(caso.get("reporte_id") or (reporte or {}).get("id") or "")
+        if not rid:
+            return None
+        self._confirmados = cargar_confirmados()
+        self._descartados = cargar_descartados()
+        kwargs = {}
+        casos_evaluar = [caso]
+        if self._confirmados:
+            kwargs["confirmados"] = self._confirmados
+        else:
+            # Sin ledger todavía: no subestimar; usar el historial local.
+            cache = [c for c in self.casos_cacheados()
+                     if str(c.get("reporte_id")) != rid]
+            casos_evaluar = cache + [caso]
+        info = self._clf.evaluar_brotes(
+            casos_evaluar, {rid: reporte or {"id": rid}},
+            descartados=self._descartados, **kwargs,
+        )
+        return info.get(rid)
+
+    def _aplicar_brote(self, caso: dict, info: dict | None,
+                       forzar: bool | None = None) -> bool | None:
+        """Fija ``brote`` con la política conservadora o un override explícito."""
+        if forzar is not None:
+            caso["brote"] = bool(forzar)
+            return bool(forzar)
+        if not info:
+            return caso.get("brote")
+        n = info.get("n")
+        caso["_brote_n"] = n
+        caso["_brote_refs"] = info.get("refs") or []
+        decision = decidir_brote(n)
+        if decision is None:
+            caso.pop("brote", None)
+            caso["_brote_dudoso"] = True
+        else:
+            caso.pop("_brote_dudoso", None)
+            caso["brote"] = decision
+        return decision
 
     def _cargar_sesiones(self) -> dict:
         try:
@@ -580,11 +634,10 @@ class BotTelegram:
                 if n2:
                     caso.update({"semaforo": n2["semaforo"], "tecnico_id": n2["tecnico_id"],
                                  "prioridad": n2["prioridad"], "_pct": n2["pct"] if n2.get("pct") else pct})
-                # brote con previos + casos propios
+                # brote con previos + casos ya confirmados por la API
                 try:
-                    brotes = self._clf.brotes_de_casos([caso], {rid: reporte})
-                    if rid in brotes:
-                        caso["brote"] = brotes[rid]
+                    info = self._brote_actual(caso, reporte)
+                    self._aplicar_brote(caso, info)
                 except Exception as exc:
                     print(f"[telegram] brote no calculado: {exc}")
             caso["pct"] = int(pct)
@@ -899,13 +952,31 @@ class BotTelegram:
         caso = dict(pendiente.get("caso") or {})
         if not caso or not caso.get("reporte_id"):
             return f"⚠️ {rid} estaba en la cola pero sin payload; no se envió."
-        if brote is not None:
-            caso["brote"] = brote
+        reporte = next((r for r in _leer_json("reportes", [])
+                        if r.get("id") == rid), None)
+        if not reporte:
+            reporte = {
+                "id": rid,
+                "parcela_id": pendiente.get("parcela_id"),
+                "productor_id": pendiente.get("productor_id"),
+                "recibido": pendiente.get("recibido"),
+                "tipo": pendiente.get("tipo"),
+            }
+        # Recalcular con el ledger confirmado actual, no con el payload viejo:
+        # otro caso pudo aprobarse/rechazarse desde que se aparcó.
+        try:
+            info = self._brote_actual(caso, reporte)
+            self._aplicar_brote(caso, info, forzar=brote)
+        except Exception as exc:
+            print(f"[telegram] brote no recalculado para {rid}: {exc}")
+            if brote is not None:
+                caso["brote"] = brote
         caso = caso_para_api(caso)
         try:
             st = self.api.validar_caso(caso)
             if isinstance(st, dict) and st.get("ya_registrado_antes"):
                 self._quitar_pendiente(rid)
+                self._confirmar_brote(rid, caso, reporte)
                 return f"ℹ️ {rid} ya estaba registrado en la API; se retiró de la cola."
         except Exception as exc:
             return f"⚠️ No pude validar {rid}: {exc}"
@@ -914,9 +985,22 @@ class BotTelegram:
         except Exception as exc:
             return f"⚠️ No se pudo registrar {rid}: {str(exc)[:200]}"
         self._quitar_pendiente(rid)
+        self._confirmar_brote(rid, caso, reporte)
         pts = resp.get("puntos", "—") if isinstance(resp, dict) else "—"
         return (f"✅ {rid} REGISTRADO con tu visto bueno "
                 f"(brote: {caso.get('brote')}) · pts API: {pts}")
+
+    def _confirmar_brote(self, rid: str, caso: dict, reporte: dict | None) -> None:
+        """Congela el caso aceptado por la API para futuros conteos de brote."""
+        try:
+            self._confirmados = cargar_confirmados()
+            if confirmar(self._confirmados, caso, reporte or {"id": rid},
+                         self._clf.parcelas):
+                guardar_confirmados(self._confirmados)
+            reactivar_descartado(rid)
+            self._descartados = cargar_descartados()
+        except Exception as exc:
+            print(f"[telegram] no se pudo actualizar el ledger de brotes: {exc}")
 
     def aprobar(self, reporte_id: str) -> str:
         """✅ Aprobar: registra el payload propuesto para un caso de la cola.
@@ -1002,7 +1086,9 @@ class BotTelegram:
           (aviso de falsa alarma por POST /avisos).
         """
         if self._quitar_pendiente(reporte_id):
-            return f"🚫 {reporte_id} retirado de la cola de dudosos (no se registró)."
+            marcar_descartado(reporte_id)
+            self._descartados = cargar_descartados()
+            return f"🗑️ {reporte_id} retirado de la cola y excluido de brotes (no se registró)."
         reporte = next((r for r in _leer_json("reportes", [])
                         if r.get("id") == reporte_id), None)
         para = [reporte.get("productor_id")] if reporte and reporte.get("productor_id") else []

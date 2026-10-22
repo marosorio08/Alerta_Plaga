@@ -45,7 +45,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente, ApiError  # noqa: E402
 from clasificador import Clasificador, caso_para_api  # noqa: E402
-from nivel2 import _a_datetime  # noqa: E402
+from confirmados import cargar_confirmados, cargar_descartados  # noqa: E402
+from nivel2 import _a_datetime, decidir_brote  # noqa: E402
 
 RAIZ = Path(__file__).resolve().parent.parent
 CACHE = RAIZ / "cache"
@@ -335,8 +336,17 @@ class ResolverCola:
             # recalcular con conjunto completo (regla cluster 24 h)
             try:
                 por_id = {r["id"]: r for r in reportes}
-                brotes = self.clf.brotes_de_casos([caso_local], por_id)
-                payload["brote"] = brotes.get(rid, payload.get("brote"))
+                ledger = cargar_confirmados()
+                info = self.clf.evaluar_brotes(
+                    [caso_local], por_id, descartados=cargar_descartados(),
+                    **({"confirmados": ledger} if ledger else {}),
+                ).get(rid)
+                if info:
+                    decision = decidir_brote(info["n"])
+                    if decision is None:
+                        payload.pop("brote", None)
+                    else:
+                        payload["brote"] = decision
             except Exception:
                 pass
 
