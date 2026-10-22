@@ -120,11 +120,17 @@ class Extras:
             return None
 
     def sugerir_pregunta(self, reporte: dict, resultado: dict) -> str | None:
-        """Pregunta útil cuando falta un dato para calcular semáforo o plaga."""
+        """Pregunta útil cuando falta un dato para calcular semáforo o plaga.
+
+        Solo se pregunta por reportes que SÍ son plaga: no se molesta al
+        productor por mensajes administrativos o "no plaga".
+        """
+        if not resultado.get("es_plaga"):
+            return None
         if not reporte.get("parcela_id"):
             return ("¿En cuál de sus parcelas está el problema y qué tanto ha avanzado? "
                     "Con eso podemos asignarle un técnico.")
-        if resultado.get("es_plaga") and resultado.get("plaga") == "desconocida":
+        if resultado.get("plaga") == "desconocida":
             return ("¿Qué es lo que ve en la planta: insectos, manchas, hojas comidas o "
                     "la planta se marchita? ¿Qué parte de la parcela está afectada?")
         return None
