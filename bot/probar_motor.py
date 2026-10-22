@@ -220,6 +220,7 @@ def main() -> None:
         ("todas las matas así", 100),
         ("todo el cultivo", 100),
         ("casi todas las plantas", 90),
+        ("Las hojas están todas agujeradas.", 10),
     ]:
         valor = extraer_pct(frase)
         revisar(f"pct «{frase[:32]}» = {esperado}", valor == esperado, f"-> {valor}")
