@@ -117,8 +117,12 @@ def main() -> None:
         clf_inf.reportes_actuales = {}
         clf_inf.casos_actuales = {}
         par = clf_inf.inferir_parcela(rep_sin_parcela)
-        revisar("sin parcela infiere la primera del productor (P-050)",
+        revisar("sin plaga infiere la primera del productor (P-050)",
                 bool(par) and par.get("id") == "P-050", str(par and par.get("id")))
+        rep_con_plaga = dict(rep_sin_parcela, _plaga_actual="mancha_chocolate")
+        par2 = clf_inf.inferir_parcela(rep_con_plaga)
+        revisar("con mancha_chocolate infiere la etapa CRÍTICA (P-051, floración)",
+                bool(par2) and par2.get("id") == "P-051", str(par2 and par2.get("id")))
     else:
         print("  (se omite: catálogo local sin PR-137)")
 

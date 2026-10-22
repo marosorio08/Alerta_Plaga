@@ -763,6 +763,8 @@ class Clasificador:
         t_rep = _a_datetime(reporte.get("recibido"))
         limite = (t_rep - timedelta(days=7)) if t_rep else None
 
+        plaga_actual = (reporte.get("_plaga_actual") or "").strip()
+
         # 1) y 2) historial propio reciente del productor
         candidatos = []
         for rid, r in (self.reportes_actuales or {}).items():
@@ -780,17 +782,35 @@ class Clasificador:
         if candidatos:
             candidatos.sort(key=lambda x: x[0] or 0, reverse=True)
             # 1) misma plaga si la conocemos
-            plaga_actual = (reporte.get("_plaga_actual") or "").strip()
             if plaga_actual:
                 for _, pid, pl in candidatos:
                     if pl == plaga_actual and pid in self.parcelas:
                         return self.parcelas[pid]
-            # 2) la más reciente
+
+        # 2) la parcela del productor cuya ETAPA es CRÍTICA para la plaga.
+        #    Patrón observado en las respuestas `-R` del reto (2/2 casos con
+        #    plaga conocida): R-2071 eligió plántula (crítica) sobre floración
+        #    (susceptible); R-2082 eligió V4 (crítica) sobre VT.
+        #    Para R-2128: mancha chocolate es crítica en floración (P-051),
+        #    no en vegetativa (P-050) -> P-051.
+        if plaga_actual:
+            plaga = next((p for p in self.plagas if p["id"] == plaga_actual), None)
+            if plaga:
+                criticas = []
+                for p in propias:
+                    etapas = (plaga.get("etapas_criticas") or {}).get(p.get("cultivo")) or []
+                    if p.get("etapa") in etapas:
+                        criticas.append(p)
+                if len(criticas) == 1:
+                    return criticas[0]
+
+        if candidatos:
+            # 3) la parcela de su reporte más reciente
             pid = candidatos[0][1]
             if pid in self.parcelas:
                 return self.parcelas[pid]
 
-        # 3) primera parcela del productor (orden del catálogo)
+        # 4) primera parcela del productor (orden del catálogo)
         return propias[0]
 
     def resolver_nivel2(self, reporte: dict, plaga_id: str, resultado: dict) -> dict:
