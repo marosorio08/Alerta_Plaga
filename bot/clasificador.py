@@ -739,11 +739,72 @@ class Clasificador:
         self._tecnicos_cache[clave] = datos
         return datos
 
+    def inferir_parcela(self, reporte: dict) -> dict | None:
+        """Deduce la parcela cuando el reporte no la trae (parcela_id nulo).
+
+        Lógica (caso real R-2128, PR-137 con P-050/P-051):
+          1. Misma parcela usada por el productor en un caso reciente con la
+             MISMA plaga (si se conoce) → es la más probable.
+          2. La parcela de su reporte más reciente (últimos 7 días).
+          3. La primera parcela del productor en el catálogo. Patrón observado
+             en las respuestas `-R` del reto: 3 de 4 veces fue la primera.
+        Devuelve la parcela (dict) o None. Se marca `_parcela_inferida` para
+        dejar rastro de que no vino en el reporte.
+        """
+        if reporte.get("parcela_id"):
+            return self.parcelas.get(reporte["parcela_id"])
+        prod_id = reporte.get("productor_id")
+        if not prod_id:
+            return None
+        propias = [p for p in self.parcelas.values() if p.get("productor_id") == prod_id]
+        if not propias:
+            return None
+
+        t_rep = _a_datetime(reporte.get("recibido"))
+        limite = (t_rep - timedelta(days=7)) if t_rep else None
+
+        # 1) y 2) historial propio reciente del productor
+        candidatos = []
+        for rid, r in (self.reportes_actuales or {}).items():
+            if r.get("productor_id") != prod_id or not r.get("parcela_id"):
+                continue
+            if r.get("respuesta_a"):
+                continue
+            t_r = _a_datetime(r.get("recibido"))
+            if t_rep and t_r and t_r > t_rep:
+                continue  # solo el pasado
+            if limite and t_r and t_r < limite:
+                continue
+            caso = (self.casos_actuales or {}).get(rid) or {}
+            candidatos.append((t_r or t_rep, r["parcela_id"], caso.get("plaga")))
+        if candidatos:
+            candidatos.sort(key=lambda x: x[0] or 0, reverse=True)
+            # 1) misma plaga si la conocemos
+            plaga_actual = (reporte.get("_plaga_actual") or "").strip()
+            if plaga_actual:
+                for _, pid, pl in candidatos:
+                    if pl == plaga_actual and pid in self.parcelas:
+                        return self.parcelas[pid]
+            # 2) la más reciente
+            pid = candidatos[0][1]
+            if pid in self.parcelas:
+                return self.parcelas[pid]
+
+        # 3) primera parcela del productor (orden del catálogo)
+        return propias[0]
+
     def resolver_nivel2(self, reporte: dict, plaga_id: str, resultado: dict) -> dict:
         """Calcula pct, prioridad, semáforo y técnico para un caso nuevo."""
         if not plaga_id or plaga_id == "desconocida":
             return {}
         parcela = self.parcelas.get(reporte.get("parcela_id") or "")
+        inferida = False
+        if not parcela:
+            # Sin parcela en el reporte (p. ej. R-2128): se deduce del productor.
+            reporte_ctx = dict(reporte)
+            reporte_ctx["_plaga_actual"] = plaga_id
+            parcela = self.inferir_parcela(reporte_ctx)
+            inferida = bool(parcela)
         plaga = next((p for p in self.plagas if p["id"] == plaga_id), None)
         if not parcela or not plaga:
             return {}
@@ -754,6 +815,9 @@ class Clasificador:
                              pct_ia=resultado.get("pct_ia"))
         datos = n2.como_dict()
         datos["detalle_nivel2"] = n2.detalle
+        if inferida:
+            datos["_parcela_inferida"] = parcela.get("id")
+            datos["detalle_nivel2"] += f" · parcela inferida {parcela.get('id')}"
         return datos
 
     # ---------- 9. Brote (regla global, sin IA) ----------
