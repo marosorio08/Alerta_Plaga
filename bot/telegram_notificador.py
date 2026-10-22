@@ -174,7 +174,8 @@ def alerta_dudoso(caso: dict, motivo: str, detalle: dict | None = None,
             lineas.append(
                 f"  • {_esc(ref.get('reporte_id'))} · {_esc(ref.get('plaga'))} · "
                 f"{_esc(ref.get('distancia_km'))} km · "
-                f"{_esc(str(ref.get('recibido') or '')[:16])}{actual}"
+                f"{_esc(str(ref.get('recibido') or '')[:16])} "
+                f"({_esc(ref.get('fuente') or '?')}, {_esc(ref.get('horas'))} h){actual}"
             )
     if detalle:
         conf = detalle.get("confianza")

@@ -36,6 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from api_cliente import ApiCliente, ApiError  # noqa: E402
 from clasificador import Clasificador, caso_para_api, fusionar_respuesta, resultados_a_casos  # noqa: E402
+from confirmados import (  # noqa: E402
+    cargar_confirmados, cargar_descartados, confirmar, guardar_confirmados,
+    sembrar_desde_enviados,
+)
 from nivel2 import decidir_brote  # noqa: E402
 from extras import Extras  # noqa: E402
 from supabase_repositorio import RepositorioSupabase  # noqa: E402
@@ -105,6 +109,10 @@ class Listener:
         # estados viejos en los que la respuesta se procesó con id equivocado.
         self.estado.setdefault("respuestas_aplicadas", [])
         self.casos = {c["reporte_id"]: c for c in cargar_json(CASOS_TODOS, [])}
+        # Ledger de casos que la API ya confirmó (201/409) y falsas alarmas.
+        # El brote solo cuenta esos casos; las propuestas locales no inflan.
+        self.confirmados = cargar_confirmados()
+        self.descartados = cargar_descartados()
         self._parkeados: set[str] = {
             str(p.get("reporte_id"))
             for p in cargar_json(PENDIENTES_REVISION, [])
@@ -183,6 +191,29 @@ class Listener:
                 self.casos[caso["reporte_id"]] = caso
                 self._marcar_procesado(caso["reporte_id"])
         print(f"[{ahora()}] reconstruidos {len(faltan)} caso(s) ya enviados para el historial de brote")
+
+    def _sembrar_confirmados(self, reportes: list[dict]) -> None:
+        """Recupera el ledger si no existe o si faltan casos ya enviados.
+
+        Nunca reescribe un caso ya congelado: si el ledger ya tiene la
+        referencia, se conserva la plaga y coordenadas originales.
+        """
+        por_id = self.reportes_actuales or {r["id"]: r for r in reportes}
+        nuevos = sembrar_desde_enviados(
+            self.confirmados, self.casos, por_id, self.clf.parcelas,
+            self.estado.get("enviados", []),
+        )
+        if nuevos:
+            guardar_confirmados(self.confirmados)
+            print(f"[{ahora()}] ledger de brotes: {nuevos} caso(s) confirmado(s) recuperado(s)")
+
+    def _confirmar_caso(self, rid: str, caso: dict, reporte: dict | None = None) -> None:
+        """Congela un caso aceptado por la API para el conteo de brotes."""
+        reporte = (reporte or self.reportes_actuales.get(rid)
+                   or self._reporte_por_id(rid) or {})
+        ref = confirmar(self.confirmados, caso, reporte, self.clf.parcelas)
+        if ref:
+            guardar_confirmados(self.confirmados)
 
     @staticmethod
     def _fusionar_respuesta(padre: dict, respuesta: dict,
@@ -281,6 +312,9 @@ class Listener:
         # Reconstruir casos ya enviados que falten en la caché local, para que
         # cuenten en el historial de brote aunque no se reenvíen.
         self._reconstruir_enviados(reportes)
+        # El bot de Telegram puede marcar falsas alarmas en otro proceso.
+        self.descartados = cargar_descartados()
+        self._sembrar_confirmados(reportes)
 
         procesados = set(self.estado["procesados"])
         pendientes = [r for r in reportes if r["id"] not in procesados]
@@ -325,10 +359,10 @@ class Listener:
                   f"{marca:<8} plaga={caso.get('plaga')} conf={round(float(conf), 2)}{nivel2} "
                   f"| {str(detalle.get('texto', ''))[:60]}")
 
-        # FASE 2 — recalcular brotes con el conjunto COMPLETO (previos +
-        # todos los casos propios). Corrige en memoria el valor de brote de
-        # todos los casos antes de que nadie se registre.
-        self._recalcular_brotes(self.reportes_actuales)
+        # FASE 2 — recalcular brotes con el lote nuevo + los casos ya
+        # confirmados por la API. Las propuestas viejas o aparcadas no cuentan:
+        # la API no las conoce y no deben inflar el brote.
+        self._recalcular_brotes(self.reportes_actuales, ids_batch=list(acumulados))
 
         # FASE 3 — registrar (ya con el brote corregido). Los casos dudosos
         # se aparcan para revisión conjunta antes de enviarlos.
@@ -381,6 +415,9 @@ class Listener:
             respuesta = self.api.registrar_caso(caso_para_api(caso))
             if rid not in self.estado["enviados"]:
                 self.estado["enviados"].append(rid)
+            # Congelar la referencia ANTES de que una reclasificación futura
+            # pueda cambiar la plaga o la parcela usadas para brotes.
+            self._confirmar_caso(rid, caso, reporte)
             etiqueta = "complemento" if (forzar and ya_estaba) else "registrado"
             print(f"[{ahora()}] {etiqueta} en POST /casos: {rid}")
             try:
@@ -403,6 +440,10 @@ class Listener:
                 self.repo.guardar_envio(rid, caso, "error", error=str(exc))
             except Exception as exc2:
                 print(f"[{ahora()}] aviso Supabase (error {rid}): {exc2}")
+            # 409 = la API ya lo tenía registrado. Aunque no acepte el cambio,
+            # el caso SÍ cuenta para brotes: se confirma con los datos locales.
+            if getattr(exc, "status", None) == 409:
+                self._confirmar_caso(rid, caso, reporte)
             return False
 
     def _reconciliar(self, reportes: list[dict]) -> None:
@@ -410,7 +451,7 @@ class Listener:
 
         - Crea el caso de cualquier reporte publicado que no esté en `casos`
           (por ejemplo, si el listener arrancó tarde o el estado se perdió).
-        - Recalcula brotes con el conjunto completo.
+        - Recalcula brotes con previos + confirmados + los pendientes de envío.
         - Envía los casos que no estén en `enviados`.
         - Las respuestas (`respuesta_a`) no se envían como casos propios; su
           padre se envía/complementa desde el flujo normal.
@@ -436,7 +477,11 @@ class Listener:
                 self.casos[caso["reporte_id"]] = caso
                 self._marcar_procesado(caso["reporte_id"])
 
-        self._recalcular_brotes(por_id)
+        ids_pendientes = [
+            rid for rid in self.casos
+            if rid not in self.estado["enviados"] and rid not in self._parkeados
+        ]
+        self._recalcular_brotes(por_id, ids_batch=ids_pendientes)
 
         for rid, caso in list(self.casos.items()):
             if rid in self.estado["enviados"] or rid in self._parkeados:
@@ -454,6 +499,7 @@ class Listener:
                 st = self.api.validar_caso(caso_para_api(caso))
                 if isinstance(st, dict) and st.get("ya_registrado_antes"):
                     self.estado["enviados"].append(rid)
+                    self._confirmar_caso(rid, caso, reporte)
                     continue
             except Exception as exc:
                 print(f"[{ahora()}] aviso validando {rid} en reconciliación: {exc}")
@@ -471,21 +517,50 @@ class Listener:
             if self._registrar_caso(reporte, caso):
                 self.acciones_extra(reporte, detalle, caso)
 
-    def _recalcular_brotes(self, reportes_por_id: dict) -> None:
-        """Reaplica la regla de brote sobre el conjunto completo de casos.
+    def _recalcular_brotes(self, reportes_por_id: dict,
+                           ids_batch: list[str] | None = None) -> None:
+        """Reaplica la regla de brote con la fuente de verdad confirmada.
 
-        Guarda en el caso el conteo ``_brote_n`` y las referencias auditables.
-        Para casos nuevos aplica la política conservadora: si ``n == 2`` no se
-        envía ``brote`` y se marca ``_brote_dudoso`` para revisión conjunta.
+        - Con ``ids_batch``: evalúa el lote nuevo contra previos + confirmados
+          + los demás casos del lote. Sirve para decidir qué aparcar.
+        - Sin ``ids_batch``: audita cada caso contra previos + confirmados
+          únicamente (no deja que propuestas viejas cuenten entre sí).
+
+        Guarda ``_brote_n``, ``_brote_refs`` y ``_brote_modo`` para auditoría.
+        A los casos nuevos les aplica la política conservadora: ``n == 2`` no
+        envía ``brote`` y los manda a revisión.
         """
         try:
-            detalles = self.clf.evaluar_brotes(list(self.casos.values()), reportes_por_id)
+            detalles: dict[str, dict] = {}
+            kwargs_ledger = {"confirmados": self.confirmados} if self.confirmados else {}
+            if ids_batch is None:
+                for rid, caso in list(self.casos.items()):
+                    if rid in self.descartados or caso.get("descartado"):
+                        continue
+                    info = self.clf.evaluar_brotes(
+                        [caso], reportes_por_id,
+                        descartados=self.descartados,
+                        **kwargs_ledger,
+                    )
+                    if rid in info:
+                        detalles[rid] = info[rid]
+            else:
+                casos_lote = [self.casos[rid] for rid in ids_batch
+                              if rid in self.casos and rid not in self.descartados]
+                detalles = self.clf.evaluar_brotes(
+                    casos_lote, reportes_por_id,
+                    descartados=self.descartados,
+                    **kwargs_ledger,
+                )
+
             for rid, info in detalles.items():
                 caso = self.casos.get(rid)
                 if not caso:
                     continue
                 caso["_brote_n"] = info["n"]
                 caso["_brote_refs"] = info["refs"]
+                caso["_brote_modo"] = info.get("modo")
+                caso["_brote_confirmados"] = bool(info.get("confirmados"))
                 if rid in self.estado["enviados"]:
                     # Ya está en la API: no se puede cambiar; solo se audita.
                     continue
@@ -584,6 +659,9 @@ class Listener:
         pendientes.append({
             "reporte_id": rid,
             "recibido": reporte.get("recibido"),
+            "parcela_id": reporte.get("parcela_id"),
+            "productor_id": reporte.get("productor_id"),
+            "tipo": reporte.get("tipo"),
             "texto": (detalle.get("texto") or "")[:280],
             "motivo": motivo,
             "caso": caso_para_api(caso),
