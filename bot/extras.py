@@ -35,10 +35,16 @@ PLAZO_HORAS = {"rojo": 24, "naranja": 48, "amarillo": 72, "verde": 168}
 
 
 class Extras:
-    def __init__(self, api, seco: bool = True, repo=None) -> None:
-        """seco=True -> imprime lo que haría pero no manda nada a la API."""
+    def __init__(self, api, seco: bool = True, repo=None,
+                 seco_preguntas: bool | None = None) -> None:
+        """seco=True -> imprime lo que haría pero no manda nada a la API.
+
+        `seco_preguntas` permite enviar preguntas reales aunque los avisos
+        sigan en seco (el reto premia preguntar; no arriesga puntos).
+        """
         self.api = api
         self.seco = seco
+        self.seco_preguntas = seco if seco_preguntas is None else seco_preguntas
         self.repo = repo
         self.enviados: list[dict] = []
 
@@ -98,7 +104,7 @@ class Extras:
     # -------------------------------------------------------------- preguntas
 
     def preguntar(self, reporte_id: str, texto: str) -> dict | None:
-        if self.seco:
+        if self.seco_preguntas:
             print(f"  [seco] pregunta a {reporte_id}: {texto[:90]}")
             return {"reporte_id": reporte_id, "texto": texto}
         try:

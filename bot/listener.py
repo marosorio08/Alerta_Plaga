@@ -92,12 +92,15 @@ class Listener:
         self.extras = Extras(
             self.api,
             seco=(not avisos_reales or not self.enviar),
+            seco_preguntas=not preguntas,
             repo=self.repo,
         ) if extras else None
         self.productores = {p["id"]: p for p in self.clf.api.get_productores()} if extras else {}
         self.estado = cargar_json(ESTADO, {"procesados": [], "enviados": [], "iniciado": ahora()})
         self.estado.setdefault("brotes_avisados", [])
         self.estado.setdefault("dudosos_avisados", [])
+        # Reportes a los que ya se les preguntó (no repetir la pregunta).
+        self.estado.setdefault("preguntadas", [])
         # Respuestas ya fusionadas con su reporte original. Permite migrar
         # estados viejos en los que la respuesta se procesó con id equivocado.
         self.estado.setdefault("respuestas_aplicadas", [])
@@ -331,6 +334,9 @@ class Listener:
         # se aparcan para revisión conjunta antes de enviarlos.
         for rid, (destino, detalle, caso) in acumulados.items():
             caso = self.casos.get(rid, caso)  # toma el caso ya recalculado
+            # Preguntar al productor si falta un dato (parcela o plaga). Se hace
+            # ANTES de aparcar/registrar y NO depende del envío de casos.
+            self._preguntar_si_falta(destino, detalle, caso)
             if rid in self._parkeados:
                 continue
             motivo = self._es_dudoso(detalle, caso)
@@ -502,6 +508,33 @@ class Listener:
     def _guardar(self) -> None:
         guardar_json(CASOS_TODOS, list(self.casos.values()))
         guardar_json(ESTADO, self.estado)
+
+    def _preguntar_si_falta(self, reporte: dict, detalle: dict, caso: dict) -> None:
+        """Pregunta al productor cuando falta la parcela o la plaga.
+
+        Es el flujo validado con R-2128: `POST /preguntas` -> el productor
+        responde un `-R` con la parcela y el porcentaje, y el caso se completa
+        con datos reales en vez de inferirlos. No arriesga puntos y suma en el
+        reto extra de "preguntas".
+        """
+        if not self.preguntas or not self.extras:
+            return
+        rid = caso.get("reporte_id") or reporte.get("id")
+        if not rid or rid in self.estado["preguntadas"]:
+            return
+        if reporte.get("respuesta_a"):
+            return  # es una respuesta del productor, no un reporte nuevo
+        # Si ya está registrado y completo, no hay nada que preguntar.
+        if rid in self.estado["enviados"] and caso.get("semaforo") and caso.get("tecnico_id"):
+            return
+        texto = self.extras.sugerir_pregunta(reporte, caso)
+        if not texto:
+            return
+        resp = self.extras.preguntar(rid, texto)
+        if resp:
+            self.estado["preguntadas"].append(rid)
+            guardar_json(ESTADO, self.estado)
+            print(f"[{ahora()}] pregunta enviada a {rid}: {texto[:80]}")
 
     def _es_dudoso(self, detalle: dict, caso: dict) -> str | None:
         """Devuelve el motivo si el caso merece revisión conjunta, o None.
