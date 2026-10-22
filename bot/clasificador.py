@@ -1038,12 +1038,28 @@ class Clasificador:
         return mejor
 
     def _multimedia(self, rid, tipo, audio, foto, cultivo, etapa) -> dict:
-        """Lee el resultado multimodal de caché o llama a la IA (una sola vez)."""
+        """Lee el resultado multimodal de caché o llama a la IA (una sola vez).
+
+        Un resultado VACÍO no se considera válido: si el STT/visión falló de
+        forma transitoria (p. ej. R-2128 quedó con texto ""), se reintenta en
+        vez de quedarse cacheado para siempre.
+        """
         cache_file = CACHE / "multimedia.json"
         cache: dict = {}
         if cache_file.exists():
             cache = json.loads(cache_file.read_text(encoding="utf-8"))
-        if rid and rid in cache and not cache[rid].get("error"):
+
+        def _util(entrada: dict | None) -> bool:
+            if not entrada or entrada.get("error"):
+                return False
+            if entrada.get("fuente") in ("stt", "vision", "whisper"):
+                return bool((entrada.get("texto") or "").strip()
+                            or (entrada.get("texto_respaldo") or "").strip()
+                            or entrada.get("plaga_sugerida")
+                            or entrada.get("es_plaga_sugerida") is not None)
+            return True
+
+        if rid and _util(cache.get(rid)):
             return cache[rid]
         if not self.con_ia:
             return {"fuente": "ninguna"}
@@ -1056,7 +1072,7 @@ class Clasificador:
             )
         except Exception as exc:  # pragma: no cover
             return {"fuente": "ninguna", "error": str(exc)}
-        if rid and not res.get("error"):
+        if rid and _util(res):
             cache[rid] = res
             cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
         return res
