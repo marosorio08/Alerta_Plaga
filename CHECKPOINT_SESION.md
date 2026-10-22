@@ -4,6 +4,9 @@
 > corte del 21-oct ~14:30, toda la infraestructura, los errores aprendidos y el
 > flujo de trabajo actual. Complementa a `MEMORIA_VERIFICACION.md` (historial
 > de casos dudosos) y `REPORTE_FINAL.md` (estado del hackathon).
+>
+> **Continuación del día 21 (corte 18:45):** `MEMORIA_SESION_21_OCT.md` — casos,
+> fixes, estado, riesgos y mapa de toda la documentación.
 
 ---
 
