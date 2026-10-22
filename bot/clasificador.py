@@ -1239,6 +1239,11 @@ def resultados_a_casos(reportes: list, clasif: Clasificador) -> list[dict]:
                 caso["prioridad"] = nivel2["prioridad"]
                 caso["_nivel2"] = nivel2["detalle_nivel2"]
                 caso["_pct"] = nivel2["pct"]
+                # La parcela no venía en el reporte: se dedujo del productor.
+                # Se marca para que el listener lo aparque y se pregunte al
+                # productor (R-2128: la deducción habría fallado).
+                if nivel2.get("_parcela_inferida"):
+                    caso["_parcela_inferida"] = nivel2["_parcela_inferida"]
 
         # compatibilidad con el dashboard (el campo urgente ya no se califica)
         caso["urgente"] = caso.get("semaforo") in ("rojo", "naranja")

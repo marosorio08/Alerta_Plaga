@@ -526,6 +526,12 @@ class Listener:
         # ciegas aunque la regla de cultivo exclusivo dé una plaga (R-2121).
         if detalle.get("tipo") == "voz" and not str(detalle.get("texto") or "").strip():
             return "voz sin transcripción (no se leyó el mensaje; revisar antes de enviar)"
+        # Parcela inferida: el reporte no traía parcela y se dedujo del
+        # productor. No se envía a ciegas: hay que preguntarle (R-2128, donde
+        # la inferencia habría elegido P-050 y la real era P-051).
+        if caso.get("_parcela_inferida"):
+            return (f"parcela inferida ({caso['_parcela_inferida']}); "
+                    f"preguntar al productor antes de enviar")
         if caso.get("plaga") == "desconocida":
             return "plaga desconocida (el motor no identificó qué plaga es)"
         if conf < CONFIANZA_DUDOSA:
