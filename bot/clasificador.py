@@ -372,6 +372,36 @@ class Clasificador:
             previo = hist["por_parcela"].get(parcela_id)
             if previo and previo.get("plaga") in (candidatas or {previo.get("plaga")}):
                 return previo["plaga"]
+
+        # Precedente PROPIO: la misma parcela ya resuelta por nuestro motor en
+        # los últimos 7 días. Caso real R-2126: P-061 (papa) ya era
+        # tizon_tardio (R-2077) y el desempate solo miraba /casos-previos.
+        if parcela_id and self.casos_actuales and self.reportes_actuales:
+            try:
+                from datetime import datetime
+
+                from nivel2 import ZONA_HORARIA_RETO
+
+                limite = datetime.now(ZONA_HORARIA_RETO) - timedelta(days=7)
+                propios = []
+                for rid, caso in self.casos_actuales.items():
+                    pl = caso.get("plaga")
+                    if not caso.get("es_plaga") or pl in (None, "desconocida"):
+                        continue
+                    r = self.reportes_actuales.get(rid) or {}
+                    if r.get("parcela_id") != parcela_id or r.get("respuesta_a"):
+                        continue
+                    if candidatas and pl not in candidatas:
+                        continue
+                    t = _a_datetime(r.get("recibido"))
+                    if t is None or t < limite:
+                        continue
+                    propios.append((t, pl))
+                if propios:
+                    return max(propios)[1]
+            except Exception:
+                pass
+
         if cultivo:
             cont = hist["por_cultivo"].get(cultivo)
             if cont:
