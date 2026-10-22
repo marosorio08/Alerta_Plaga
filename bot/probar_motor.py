@@ -80,6 +80,13 @@ def main() -> None:
         res = clasificar_texto(clf, texto, "P-203")
         revisar(f"no es plaga: «{texto[:38]}»", res["es_plaga"] is False, f"-> {res}")
 
+    # Un saludo inicial no debe tapar los síntomas que vienen después (R-2183).
+    res = clasificar_texto(clf, "Buenas tardes. Le hablo de la parcela El Cerrito. "
+                               "Las manchitas café se están juntando y la hoja se pone negra. "
+                               "Es poquito, como el 10 %.", "P-055")
+    revisar("saludo + síntomas = mancha_chocolate (no prefiltro)",
+            res.get("plaga") == "mancha_chocolate", str(res))
+
     print("\n[3] Cruce cultivo → plaga")
     res = clasificar_texto(clf, "Ya le cayó el chahuixtle al frijol", "P-053")
     revisar("chahuixtle en frijol = roya_frijol", res.get("plaga") == "roya_frijol", str(res))

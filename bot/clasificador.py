@@ -48,7 +48,7 @@ PLAGAS_URGENTES = {
 PATRONES_NO_PLAGA = [
     "para saludar", "nomás para saludar", "nomas para saludar", "solo para saludar",
     "platica", "plática", "curso", "capacitacion", "capacitación", "taller",
-    "junta", "ejidatario", "asamblea", "reunion", "reunión",
+    "junta de", "la junta", "junta ejidal", "ejidatario", "asamblea", "reunion", "reunión",
     "que hora abren", "hora abren", "abren la oficina", "oficina", "horario",
     "precio", "precios", "pagando", "kilo", "vender", "compra", "cuanto cuesta",
     "apoyo", "gobierno", "semilla", "programa", "subsidio", "solicitud", "papeles",
@@ -124,9 +124,13 @@ SENALES_PLAGA: dict[str, dict[str, float]] = {
     },
     "mancha_chocolate": {
         "mancha de chocolate": 3, "chocolate": 2.5, "manchita cafe": 2,
+        "manchitas cafe": 2.5, "manchitas cafes": 2.5,
         "manchas cafe rojizo": 2.5, "manchas redondas": 2,
         "lesiones color chocolate": 3, "mancha color chocolate": 3,
         "manchas cafes": 2, "lesiones cafes": 2,
+        "se estan juntando": 2.5, "se juntan": 2.5, "manchas se juntan": 2.5,
+        "hoja se pone negra": 2.5, "se pone negra": 2.5,
+        "ennegrecen": 2.5, "se ennegrece": 2.5, "hojas negras": 2,
     },
     "hlb": {
         "dragon amarillo": 3, "hlb": 3, "enverdecimiento": 3,
