@@ -787,12 +787,18 @@ class Clasificador:
                     if pl == plaga_actual and pid in self.parcelas:
                         return self.parcelas[pid]
 
-        # 2) la parcela del productor cuya ETAPA es CRÍTICA para la plaga.
-        #    Patrón observado en las respuestas `-R` del reto (2/2 casos con
-        #    plaga conocida): R-2071 eligió plántula (crítica) sobre floración
-        #    (susceptible); R-2082 eligió V4 (crítica) sobre VT.
-        #    Para R-2128: mancha chocolate es crítica en floración (P-051),
-        #    no en vegetativa (P-050) -> P-051.
+        # 2) PERSISTENCIA: la parcela del reporte más reciente del productor.
+        #    Evidencia en las respuestas `-R` de casos SIN parcela: 3/3 con
+        #    historial revelaron la MISMA parcela que ya venía usando
+        #    (R-2064->P-005, R-2055->P-094, R-2082->P-239); el único que no
+        #    coincidió (R-2071->P-092) no tenía historial previo.
+        if candidatos:
+            pid = candidatos[0][1]
+            if pid in self.parcelas:
+                return self.parcelas[pid]
+
+        # 3) Sin historial: la parcela cuya ETAPA es CRÍTICA para la plaga.
+        #    (Caso R-2071: sin historial, eligió plántula = crítica.)
         if plaga_actual:
             plaga = next((p for p in self.plagas if p["id"] == plaga_actual), None)
             if plaga:
@@ -803,12 +809,6 @@ class Clasificador:
                         criticas.append(p)
                 if len(criticas) == 1:
                     return criticas[0]
-
-        if candidatos:
-            # 3) la parcela de su reporte más reciente
-            pid = candidatos[0][1]
-            if pid in self.parcelas:
-                return self.parcelas[pid]
 
         # 4) primera parcela del productor (orden del catálogo)
         return propias[0]
