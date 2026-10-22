@@ -89,7 +89,12 @@ _FRACCIONES = [
     (r"\bla\s+sexta\s+parte\b|\bsexta\s+parte\b", 17),
     (r"\bla\s+mitad\b|\bmedias?\b", 50),
     (r"casi\s+todo|casi\s+toda", 90),
-    (r"toda\s+la\s+parcela|todo\s+el\s+terreno|toda\s+la\s+milpa", 100),
+    (r"toda\s+la\s+parcela|todo\s+el\s+terreno|toda\s+la\s+milpa|"
+     r"todas?\s+las?\s+plantas?|todas?\s+las?\s+matas?|"
+     r"todas?\s+las?\s+plantitas?|todos?\s+los?\s+cultivos?|"
+     r"toda\s+la\s+siembra|todo\s+el\s+cultivo|todo\s+el\s+campo|"
+     r"toda\s+la\s+huerta|toda\s+la\s+superficie|todas?\s+las?\s+hectareas?|"
+     r"todas?\s+estan|estan\s+todas?", 100),
 ]
 # "una de cada cuatro matas" -> 25 %
 _DE_CADA = re.compile(r"una\s+de\s+cada\s+(\w+)")
