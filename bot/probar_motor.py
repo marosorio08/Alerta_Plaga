@@ -92,6 +92,9 @@ def main() -> None:
     revisar("hojas nuevas rotas/rasgadas en maíz = gusano_cogollero",
             res.get("plaga") == "gusano_cogollero", str(res))
 
+    res = clasificar_texto(clf, "Gracias por la visita del ingeniero, ya quedó todo bien.", "P-203")
+    revisar("cierre/agradecimiento no es plaga", res["es_plaga"] is False, str(res))
+
     print("\n[3] Cruce cultivo → plaga")
     res = clasificar_texto(clf, "Ya le cayó el chahuixtle al frijol", "P-053")
     revisar("chahuixtle en frijol = roya_frijol", res.get("plaga") == "roya_frijol", str(res))

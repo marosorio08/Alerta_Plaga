@@ -56,6 +56,8 @@ PATRONES_NO_PLAGA = [
     "inscripcion", "inscripción", "constancia",
     "que pidieron", "llegaron los", "cuando llega el fertilizante", "es cierto",
     "feliz dia", "feliz día", "felicidades", "bendiciones",
+    "gracias por la visita", "gracias por venir", "ya quedó todo bien",
+    "ya quedo todo bien", "quedó todo bien", "quedo todo bien",
 ]
 
 # ---- señales de plaga ponderadas (incluye variantes ruidosas de Whisper) ----
