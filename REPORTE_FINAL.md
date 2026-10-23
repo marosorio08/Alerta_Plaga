@@ -1,5 +1,7 @@
 # 🌾 Proyecto Alerta Plaga — REPORTE COMPLETO del Equipo 7_7
 
+> Documento histórico. Para el estado actual, ver [`docs/ESTADO_Y_RAMAS.md`](docs/ESTADO_Y_RAMAS.md).
+
 > Documento final que resume **todo lo construido, decidido y aprendido** durante el
 > Hackathon IT GREEN × DIMA (UACh). Complementa a `HISTORIA_DEL_PROYECTO.md` (bitácora),
 > `docs/NIVEL2.md` y `docs/ARQUITECTURA.md` (fundamentos de defensa).

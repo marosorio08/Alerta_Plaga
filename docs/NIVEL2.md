@@ -1,73 +1,82 @@
-# Nivel 2 — prioridad, semáforo y técnico
+# Nivel 2 — prioridad, semáforo, técnico y brote
 
-> Documento de diseño para la defensa individual del viernes.
-> Explica **qué cambió**, **por qué se estructuró así** y **cómo verificarlo**.
+> Documento de diseño y defensa. Explica **qué se calcula**, **por qué** y
+> **cómo se verifica**. Las fórmulas viven en `bot/nivel2.py` y no dependen de la IA.
 
 ---
 
-## 1. Cómo detectamos el cambio del reto
+## 1. Contexto
 
-El cambio no llegó por correo: se descubre comparando la API consigo misma.
+El reto cambió a mitad de camino. Lo detectamos comparando la API consigo misma:
 
 | Señal | Antes | Después |
 |---|---|---|
-| `GET /equipo → avance.maximo_posible` | 103 | **188** |
-| `avance.aciertos` | `es_plaga`, `plaga` | + **`semaforo`**, **`tecnico`** |
-| Esquema `Caso` en `/openapi.json` | 5 campos | + `semaforo`, `tecnico_id`, `prioridad` |
-| `urgente` | calificaba | *"Nivel 1, ya no se usa"* |
+| `GET /equipo → avance.maximo_posible` | 103 | 188 |
+| Campos calificados | `es_plaga`, `plaga` | + `semaforo`, `tecnico` |
+| Esquema de `Caso` | 5 campos | + `semaforo`, `tecnico_id`, `prioridad` |
+| `urgente` | calificaba | ya no se usa |
 
-Con eso localizamos las secciones **7, 8 y 9 de `/reglas`**, que traen las fórmulas exactas.
-**Lección de ingeniería:** el sistema debía adaptarse sin reescribirse; por eso el catálogo y
-las reglas se leen de la API y no están hardcodeados.
-
----
-
-## 2. Decisión de arquitectura: separar "interpretar" de "decidir"
-
-```
-                    ┌──────────────────────────────┐
-   reporte  ───────▶│  clasificador.py  (IA)       │  ¿es plaga? ¿cuál? ¿qué %?
-   (texto/voz/foto) │  reglas de lenguaje + LLM    │  + cruce parcela→cultivo
-                    └──────────────┬───────────────┘
-                                   │ plaga + pct
-                    ┌──────────────▼───────────────┐
-                    │  nivel2.py  (código puro)    │  prioridad → semáforo → técnico
-                    │  sin IA, determinista        │  mismas entradas = misma salida
-                    └──────────────┬───────────────┘
-                                   │ semaforo, tecnico_id, prioridad
-                    ┌──────────────▼───────────────┐
-                    │  caso_para_api()             │  limpia campos internos
-                    └──────────────┬───────────────┘
-                                   ▼
-                        POST /casos/validar → POST /casos
-```
-
-**Por qué así:**
-
-1. **El reglamento lo exige.** "Reglas (código, sin IA): calculan la prioridad y el semáforo
-   y eligen al técnico. Con los mismos datos dan siempre el mismo resultado."
-2. **Reproducibilidad.** Si el semáforo dependiera de un LLM, dos ejecuciones darían dos
-   respuestas distintas y no podríamos defenderlo.
-3. **Testeable.** Al ser funciones puras, se comparan contra los 40 casos previos.
-4. **La IA queda donde sí aporta:** leer el mensaje (plaga) y extraer el porcentaje afectado,
-   que es justo lo que el reto le pide al agente.
+La lección de ingeniería: **el catálogo y las reglas se leen de la API**, no se
+hardcodean. Si los organizadores agregan plagas o cambian severidades, el motor
+se adapta sin reescribirse.
 
 ---
 
-## 3. Fórmulas implementadas (`bot/nivel2.py`)
+## 2. Separar “interpretar” de “decidir”
 
-### 3.1 Prioridad (0–100)
+```
+reporte
+  │
+  ▼
+clasificador.py        ¿es plaga? ¿cuál? ¿qué %?
+  │                    reglas + IA + STT/visión
+  ▼
+nivel2.py              prioridad → semáforo → técnico → brote
+  │                    código puro, determinista
+  ▼
+caso_para_api()        limpia campos internos
+  │
+  ▼
+POST /casos/validar → POST /casos
+```
+
+### Por qué
+
+1. **El reglamento lo exige:** prioridad, semáforo, técnico y brote son reglas
+   de código, sin IA.
+2. **Reproducibilidad:** los mismos datos deben dar el mismo resultado.
+3. **Testeable:** funciones puras contra 40 casos con respuesta oficial.
+4. **La IA queda donde aporta:** interpretar el lenguaje, transcribir voz y
+   describir fotos.
+
+---
+
+## 3. Prioridad (0–100)
+
+```
+prioridad = severidad + superficie + etapa
+```
 
 | Factor | Cálculo | Máx. |
 |---|---|---:|
 | Severidad | baja 15 · media 25 · alta 40 · crítica 50 | 50 |
 | Superficie | `ha = superficie_ha × pct/100`; `min(25, round(ha/4 × 25))` | 25 |
-| Etapa | crítica para esa plaga/cultivo 25 · susceptible 15 · otra 5 | 25 |
+| Etapa | crítica 25 · susceptible 15 · otra 5 | 25 |
 
-- Redondeo **comercial** (`14.06 → 14`, `14.5 → 15`): `floor(x + 0.5)`.
+- Redondeo comercial: `floor(x + 0.5)`.
 - **Cuarentenaria → 100 directo**, sin cálculo.
 
-### 3.2 Semáforo
+### Ejemplo del reglamento
+
+Maíz, 4.5 ha, V8, cogollero, 50 %:
+
+```
+severidad 40 + superficie 14 + etapa 25 = 79 → naranja
+```
+
+---
+
+## 4. Semáforo
 
 | Prioridad | Semáforo | Visita |
 |---|---|---|
@@ -76,120 +85,190 @@ las reglas se leen de la API y no están hardcodeados.
 | 40–69 | amarillo | 72 h |
 | 0–39 | verde | 7 días |
 
-### 3.3 Técnico
+---
 
-1. Solo de la **especialidad de la plaga** (`entomologia` / `fitopatologia`).
-2. Solo con **carga < 5** en el momento del mensaje.
-3. El **más cercano** a la parcela por haversine (R = 6371 km).
-4. Empates: menor carga → menor id. Si nadie cumple: `null`.
+## 5. Técnico
 
-**Detalle clave:** la carga se consulta con `GET /tecnicos?momento=<recibido>`, no con la hora
-actual. La API simula que la carga cambia con el tiempo; usar "ahora" daría otro técnico.
+1. Misma especialidad que la plaga.
+2. Carga < 5 en `momento = recibido`.
+3. El más cercano a la parcela por haversine (R = 6371 km).
+4. Empates: menor carga, luego menor id.
+5. Si nadie cumple → `null`.
 
-### 3.4 Porcentaje afectado (`pct`)
-
-Se interpreta del mensaje, como haría un técnico:
-
-| Frase del productor | pct |
-|---|---|
-| "el 75%", "setenta y cinco por ciento" | 75 |
-| "tres cuartas partes" | 75 |
-| "la mitad" | 50 |
-| "una de cada cuatro matas" | 25 |
-| "una quinta parte" | 20 |
-| no lo dice | **10** (mismo criterio que `/casos-previos`) |
-
-### 3.5 Brote (sección 9 del reglamento)
-
-Hay **brote** si, contando el caso actual, hay **3 o más casos de la misma plaga**
-cuyas parcelas están a **menos de 5 km** y que llegaron en los **últimos 7 días
-(168 h, incluido el momento del mensaje)**.
-
-| Aspecto | Decisión |
-|---|---|
-| ¿Qué cuenta? | Los previos (`GET /casos-previos`) + los casos propios |
-| ¿Qué no cuenta? | Seguimientos, mensajes que no son reportes, `desconocida` |
-| ¿Qué hora? | La `recibido` del mensaje, no la de procesamiento |
-| ¿Distancia? | Haversine entre parcelas, R = 6371 km, **estrictamente < 5 km** |
-| Sin coordenadas | No se manda el campo → vale 0, nunca resta |
-
-**Detalle de la ventana:** solo cuentan los casos **recibidos antes o a la vez**
-que el mensaje. Un caso que llega después no hace "brote retroactivo" para los
-anteriores; por eso la regla se evalúa sobre el conjunto completo y no reporte
-por reporte. La regla da **40/40** contra la respuesta oficial de `/casos-previos`.
+**Detalle clave:** la carga se consulta con
+`GET /tecnicos?momento=<recibido>`, no con la hora actual. La API simula que la
+carga cambia con el tiempo.
 
 ---
 
-## 4. Verificación (lo que se puede mostrar el viernes)
+## 6. Porcentaje afectado (`pct`)
 
-```bash
-python bot/validar_nivel2.py    # fórmulas reales contra 40 casos con respuesta correcta
-python bot/validar_brote.py     # regla de brote contra los 40 casos previos
-python bot/probar_motor.py      # 58 pruebas sin gastar API
+| Frase del productor | pct |
+|---|---:|
+| “el 75 %”, “setenta y cinco por ciento” | 75 |
+| “tres cuartas partes” | 75 |
+| “la mitad” | 50 |
+| “una de cada cuatro matas” | 25 |
+| “una quinta parte” | 20 |
+| “todas las plantas / todas las matas” | 100 |
+| “hojas agujeradas” | no es 100 %; se usa la señal del texto |
+| no lo dice | 10 |
+
+El pct mueve el semáforo. Por eso se corrigió:
+
+- “la cuarta/quinta/sexta parte” sin “una”;
+- “todas las plantas”;
+- no confundir “hojas agujeradas” con 100 %.
+
+---
+
+## 7. Brote (sección 9)
+
+### 7.1 Regla oficial
+
+Hay brote si, contando el caso actual, hay **3 o más casos de la misma plaga**:
+
+- a **menos de 5 km** de la parcela del mensaje;
+- recibidos en los **7 días previos** (168 h, incluido el momento);
+- contando `/casos-previos` y los casos propios.
+
+No cuentan:
+
+- seguimientos;
+- mensajes que no son reportes;
+- casos que quedaron como `desconocida`.
+
+La hora es `recibido`, no la de procesamiento. La distancia es haversine entre
+parcelas, R = 6371 km. La ventana es inclusiva.
+
+### 7.2 Dedupe de casos propios
+
+Los casos propios del **mismo productor y la misma parcela** se agrupan en
+clústeres de 24 h:
+
+- varios reportes en horas = **1 evento**;
+- más de 24 h = **evento nuevo**;
+- otra parcela del mismo productor = **otro evento** (R-2204).
+
+Los `/casos-previos` **nunca** se deduplican.
+
+Por qué:
+
+- R-2043: mismo productor en horas → falso positivo si no se deduplica.
+- R-2084: mismo productor/parcela 2 días después → sí debe sumar.
+- R-2204: mismo productor en otra parcela → no debe colapsarse.
+
+### 7.3 Política `n=2`
+
+| n | Decisión |
+|---:|---|
+| 0–1 | `false` |
+| 2 | zona gris: no se envía `brote`; va a revisión |
+| ≥3 | `true` |
+
+`n=2` no es sinónimo de `false`: R-2152 demostró que puede ser `true`. Por eso
+no se manda a ciegas.
+
+### 7.4 Brote profundo en decisión autónoma
+
+`decision_autonoma.py` puede convertir un `n=2` en `true` si encuentra:
+
+- un caso previo en la **misma parcela**, o
+- un tercer caso por **coordenadas del reporte**.
+
+Si no, lo deja en `false`. Esta es una capa de revisión, no la regla oficial.
+
+### 7.5 Propuesta de ledger de confirmados (rama `Caso_Emmanuel`)
+
+Problema: la API solo puede contar los casos que realmente recibió. Si el motor
+cuenta propuestas locales, aparcados o falsas alarmas, puede inflar un brote.
+
+Propuesta:
+
+- `cache/casos_confirmados.json` con plaga y coordenadas congeladas de casos
+  aceptados (`201`/`409`);
+- referencias = previos + confirmados + caso actual;
+- excluir falsas alarmas;
+- recalcular al aprobar desde Telegram.
+
+Esto no cambia la fórmula: cambia **qué casos se usan como referencia**.
+
+### 7.6 Propuesta de coherencia de hospedero
+
+El documento de diagnóstico del reto tiene una tabla de cultivos hospederos.
+Se propone usarla como **evidencia para la revisión**, no como filtro del brote:
+
+- si una referencia de una enfermedad específica aparece en un cultivo no
+  hospedero, avisar al revisor;
+- no descartar automáticamente una plaga polífaga por cultivo;
+- el conteo oficial sigue siendo plaga + distancia + tiempo.
+
+La regla oficial no usa cultivo. Meterlo como filtro sería un error.
+
+---
+
+## 8. Validación
+
+```powershell
+python bot/validar_nivel2.py    # prioridad, semáforo y técnico 40/40/40
+python bot/validar_brote.py     # brote 40/40 + casos reales
+python bot/probar_motor.py      # batería general del motor
+python bot/probar_brotes.py     # invariantes de brote (rama Caso_Emmanuel)
+python bot/replay_brotes.py     # replay offline de variantes
 ```
 
-Resultado actual:
+Resultados de referencia:
 
 ```
 Casos previos: 40
 Prioridad: 40/40   Semáforo: 40/40   Técnico: 40/40
 Brote: 40/40
-Pruebas: 58 | fallos: 0
+Casos reales documentados: 5/5
 ```
 
-El caso del reglamento también coincide: maíz 4.5 ha, V8, cogollero, 50 % →
-`40 + 14 + 25 = 79` → **naranja**.
+Casos reales usados como regresión de brote:
+
+- R-2043 → `false` (seguimiento)
+- R-2055 → `true`
+- R-2070 → `true`
+- R-2073 → `true`
+- R-2084 → `true`
 
 ---
 
-## 5. Compatibilidad: por qué nada se rompió
+## 9. Decisiones de diseño y por qué
 
-| Riesgo | Mitigación |
+| Decisión | Por qué |
 |---|---|
-| El dashboard de Emmanuel usaba `urgente` | Se conserva como derivado: `urgente = semaforo ∈ {rojo, naranja}` |
-| La API rechazaría campos internos (`_pct`) | `caso_para_api()` filtra solo los campos del esquema |
-| Cambian el catálogo (nuevas plagas/severidades) | La urgencia y los candidatos se derivan de `GET /plagas` |
-| Se cae un modelo de IA | STT y visión tienen respaldo y consenso |
-| Un reporte raro | El listener captura la excepción y sigue |
+| Semáforo no lo decide la IA | Reglamento + reproducibilidad |
+| `desconocida` en vez de inventar | No resta y evita errores |
+| Preguntar parcela en vez de inferir | La inferencia falló en R-2128 |
+| `n=2` a revisión | Puede ser true o false; R-2152 |
+| Dedupe productor + parcela | Evita R-2043 y R-2204; permite R-2084 |
+| Ledger de confirmados | La API solo cuenta lo que recibió |
+| Hospedero como evidencia | Ayuda al revisor sin romper la regla |
+| `PERMITIR_ENVIOS=0` por defecto | Evita registrar a ciegas |
 
 ---
 
-## 6. Extras implementados (apagados por defecto)
+## 10. Preguntas frecuentes
 
-| Extra | Módulo | Cómo se activa |
-|---|---|---|
-| Avisos (`/avisos`): cuarentenaria, asignación, folio | `extras.py` | `--extras` (+ `--avisos-reales`) |
-| Preguntas (`/preguntas`) cuando falta parcela o plaga | `extras.py` | `--preguntas` |
-| Brotes: 3+ casos, misma plaga, <5 km, 7 días | `extras.py` | `--extras` |
-| Plazos: escalar si no hubo visita | `extras.py` | `extras.py` (consola) |
-| Telegram rojo/naranja con botones | `telegram_notificador.py` | `TELEGRAM_BOT_TOKEN` en `.env` |
-
-**Por qué apagados:** un aviso mal disparado no resta puntos, pero ensucia el buzón y puede
-confundir al coordinador. Se activan cuando el flujo esté validado.
-
----
-
-## 7. Preguntas probables y respuesta corta
-
-**¿Por qué el semáforo no lo decide la IA?**
-Porque el reglamento lo prohíbe y porque necesitamos reproducibilidad: los mismos datos deben
-dar siempre el mismo color. La IA interpreta el mensaje; el código decide.
-
-**¿Cómo evitan que un mensaje manipule la prioridad?**
-La prioridad se calcula con la parcela y el catálogo, nunca con el texto. Un "ponme prioridad
-100" no entra en ninguna fórmula. Además se detecta y se registra como intento de inyección.
+**¿Por qué no usar la IA para prioridad o semáforo?**
+Porque el reglamento lo prohíbe y porque dos ejecuciones darían resultados
+distintos. La IA interpreta; el código decide.
 
 **¿Qué pasa si el productor no dice el porcentaje?**
-Se usa 10 %, el mismo valor por omisión que usa la API en `/casos-previos`.
+Se usa 10 %, el mismo criterio de `/casos-previos`.
 
 **¿Qué pasa si no hay técnico disponible?**
-Se manda `null`. El reglamento dice que no mandar técnico vale 0, igual que equivocarse en él
-resta; `null` es la respuesta honesta.
+Se manda `null`. Es la respuesta honesta y no resta más que equivocarse.
 
-**¿Cómo validaron las fórmulas?**
-Contra los 40 casos de `/casos-previos`, que traen la respuesta correcta: 40/40 en prioridad,
-semáforo y técnico.
+**¿Qué pasa si el reporte no trae parcela?**
+Se pregunta al productor. No se infiere a ciegas.
 
-**¿Qué pasa si los organizadores cambian el catálogo otra vez?**
-El listener refresca `/plagas` y `/parcelas` cada 10 minutos. La severidad, la especialidad y
-los cultivos compatibles salen del catálogo, no del código.
+**¿Qué pasa si un seguimiento nombra una plaga?**
+La API solo califica `es_plaga` + `plaga`; semáforo, técnico y brote no se
+califican. En papa/tizón suele convenir `desconocida`.
+
+**¿Qué pasa si el catálogo cambia?**
+El listener refresca `/plagas` y `/parcelas` cada 10 min. El motor se adapta.
