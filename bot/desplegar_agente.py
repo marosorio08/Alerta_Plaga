@@ -43,7 +43,10 @@ ENV_AGENTE = f"""# Agente Alerta Plaga — generado en el despliegue (NO subir a
 API_BASE_URL={os.getenv('API_BASE_URL')}
 EQUIPO_TOKEN={os.getenv('EQUIPO_TOKEN')}
 OPENROUTER_API_KEY={os.getenv('OPENROUTER_API_KEY')}
+OPENROUTER_MODELO_IA={os.getenv('OPENROUTER_MODELO_IA', 'gpt-4o-mini')}
 INTERPRETAR_IA={os.getenv('INTERPRETAR_IA', '2')}
+# 1 = envio automatico activo; 0 = pausado (cambiar aqui o en .env)
+PERMITIR_ENVIOS={os.getenv('PERMITIR_ENVIOS', '1')}
 SUPABASE_URL={os.getenv('SUPABASE_URL', '')}
 SUPABASE_SERVICE_ROLE_KEY={os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')}
 TELEGRAM_BOT_TOKEN={os.getenv('TELEGRAM_BOT_TOKEN', '')}
