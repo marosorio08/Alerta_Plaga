@@ -315,6 +315,16 @@ Reglas:
 | Desempate | Latencia |
 | Complemento | Solo suma si abre caso nuevo |
 
+### Latencia: por qué el registro tardó más en algunos casos
+
+La latencia que reporta la API mide el tiempo hasta `POST /casos`, **no** el tiempo que tarda el motor en clasificar. El motor decide en segundos; lo que mueve la mediana es el flujo de revisión.
+
+- **El dashboard se terminó de montar el martes.** Antes de eso, la operación dependía del bot, scripts y revisión manual; no había una interfaz web que acelerara la verificación. Eso contribuyó a una latencia mayor en la primera parte.
+- **Los casos claros se enviaban de inmediato.** Cuando la plaga era clara, compatible con el cultivo y la confianza era suficiente, el listener registraba en el mismo ciclo (20 s), sin pasar por la cola.
+- **Los casos dudosos se revisaban y a veces esperaban autorización.** Si el caso era ambiguo (brote, `n=2`, `desconocida`, baja confianza, voz sin transcripción o parcela inferida), se apartaba. Ahí se volvía a evaluar —hasta 4 intentos del modelo autónomo— y, en algunos casos, necesitaba visto bueno antes de enviarse. Eso podía tardar minutos u horas.
+- **Por qué se aceptó ese costo.** `POST /casos` es irreversible: hay una sola oportunidad, los campos se congelan y un campo errado resta. Preferimos tardar en lo dudoso antes que congelar un error. La latencia es el precio de la precisión.
+- **Efecto en la mediana.** La mediana mezcla casos instantáneos con casos que esperaron revisión; por eso parece más alta de lo que tarda el motor. No es un problema de clasificación, sino del flujo de decisión.
+
 ### Seguimientos
 
 - Mismo productor/parcela con un caso **< 24 h**.
