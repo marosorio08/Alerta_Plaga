@@ -901,7 +901,8 @@ class Clasificador:
                 continue
             referencia = {"rid": c["reporte_id"], "plaga": c["plaga"],
                           "lat": lat, "lon": lon, "recibido": r.get("recibido"),
-                          "propio": True, "prod": r.get("productor_id")}
+                          "propio": True, "prod": r.get("productor_id"),
+                          "parcela": parcela["id"]}
             referencias.append(referencia)
             elegibles.append(referencia)
 

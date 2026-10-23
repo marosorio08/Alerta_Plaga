@@ -286,6 +286,23 @@ def main() -> None:
     print("\n[15] Nivel 2 — brote (regla de la sección 9)")
     from nivel2 import contar_casos_cercanos, es_brote, MINIMO_CASOS_BROTE
 
+    # Mismo productor en parcelas distintas = eventos separados (R-2204).
+    parcelas_distintas = [
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-21T10:00:00-06:00", "propio": True,
+         "prod": "PR-X", "parcela": "P-A"},
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-22T10:00:00-06:00", "propio": True,
+         "prod": "PR-X", "parcela": "P-B"},
+        {"plaga": "chapulin", "lat": 19.50, "lon": -98.88,
+         "recibido": "2026-10-22T22:00:00-06:00", "propio": True,
+         "prod": "PR-X", "parcela": "P-A"},
+    ]
+    n = contar_casos_cercanos("chapulin", 19.50, -98.88,
+                              "2026-10-22T22:00:00-06:00", parcelas_distintas)
+    revisar("mismo productor en parcelas distintas = brote (R-2204)",
+            n >= MINIMO_CASOS_BROTE, f"-> n={n}")
+
     base = "2026-10-19T10:00:00-06:00"
     solitario = [{"plaga": "chapulin", "lat": 19.50, "lon": -98.88, "recibido": base}]
     n = contar_casos_cercanos("chapulin", 19.50, -98.88, base, solitario)

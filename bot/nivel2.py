@@ -285,7 +285,8 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
     se AGRUPAN POR CLUSTER con ventana `ventana_dedupe_horas` (por defecto
     24 h). Un productor que reporta el mismo problema en N horas cuenta UNA
     vez; si vuelve a reportar con más de 24 h de diferencia, es un evento
-    NUEVO y cuenta por separado.
+    NUEVO y cuenta por separado. El cluster es por productor + parcela:
+    otra parcela del mismo productor es otro evento (R-2204).
 
     Por qué 24 h: es la misma ventana que el motor usa para detectar
     seguimientos (`_reporte_padre_por_ventana`). Así:
@@ -300,9 +301,10 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
         return 0
     limite = t_ref - timedelta(hours=ventana_horas)
 
-    # Separamos previos (siempre cuentan de a uno) y propios (por productor).
+    # Separamos previos (siempre cuentan de a uno) y propios
+    # (productor + parcela: misma parcela = mismo evento; otra parcela = evento).
     previos_n = 0
-    propios_por_prod: dict[str | None, list] = {}
+    propios_por_clave: dict[tuple, list] = {}
     for ref in referencias:
         if ref.get("plaga") != plaga:
             continue
@@ -320,15 +322,15 @@ def contar_casos_cercanos(plaga: str, lat, lon, recibido, referencias: list[dict
             continue
         if limite <= t_otro <= t_ref:
             if dedupe_productor_propios and ref.get("propio"):
-                prod = ref.get("prod")
-                propios_por_prod.setdefault(prod, []).append(t_otro)
-                # `prod` None: se agrupa bajo None y se cuentan de a uno.
+                clave = (ref.get("prod"), ref.get("parcela"))
+                propios_por_clave.setdefault(clave, []).append(t_otro)
+                # Sin productor (`None`): se cuentan de a uno.
             else:
                 previos_n += 1
 
     clusters = 0
-    for prod, momentos in propios_por_prod.items():
-        if prod is None:
+    for clave, momentos in propios_por_clave.items():
+        if clave[0] is None:
             # Sin productor identificable: no se puede deduplicar.
             clusters += len(momentos)
             continue
