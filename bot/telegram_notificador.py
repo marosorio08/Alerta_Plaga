@@ -17,6 +17,7 @@ Así el resto del sistema puede llamarlo sin romperse.
 from __future__ import annotations
 
 import html
+import json
 import os
 import sys
 from pathlib import Path
@@ -207,6 +208,52 @@ def alerta_dudoso(caso: dict, motivo: str, detalle: dict | None = None,
             {"text": "🚫 Revisar", "callback_data": f"falsa:{rid}"},
         ]]
     return enviar("\n".join(lineas), botones)
+
+
+def alerta_duda_final(decision, dry_run: bool = False) -> bool:
+    """Notifica SOLO cuando el modelo autónomo no logró certeza tras 4 intentos.
+
+    Incluye descripción, duda, % de certeza, propuesta y botones:
+      ✅ Aceptar  /  📥 Dejar en cola para reanálisis conjunto
+    """
+    rid = str(getattr(decision, "reporte_id", "?"))
+    caso = getattr(decision, "app", {}) or {}
+    payload = getattr(decision, "payload", None)
+    certeza = float(getattr(decision, "certeza", 0) or 0)
+    duda = getattr(decision, "duda", "") or "sin detalle"
+    intentos = getattr(decision, "intentos", 0)
+    plaga = getattr(decision, "plaga", None)
+    n = getattr(decision, "n_brote", None)
+    brote = getattr(decision, "brote", None)
+    parcela = caso.get("parcela_nombre") or caso.get("parcela_id") or "sin parcela"
+    cultivo = caso.get("cultivo") or "cultivo ?"
+    pct = caso.get("pct")
+    lineas = [
+        f"🔎 <b>DUDA PERSISTENTE — {_esc(rid)}</b>",
+        f"<b>Intentos de reanálisis:</b> {intentos}/4",
+        f"<b>Plaga:</b> {_esc(plaga or 'desconocida')}  <b>pct:</b> {_esc(pct) if pct is not None else '—'}",
+        f"<b>Parcela:</b> {_esc(parcela)} ({_esc(cultivo)})",
+        f"<b>Semáforo:</b> {_esc(caso.get('semaforo'))}  "
+        f"<b>Técnico:</b> {_esc(caso.get('tecnico_id'))}",
+        f"<b>Brote:</b> {_esc(brote) if brote is not None else 'sin definir'}  "
+        f"<b>n:</b> {_esc(n) if n is not None else '—'}",
+        f"<b>Duda:</b> {_esc(duda)}",
+        f"<b>Certeza:</b> {round(certeza * 100)}%",
+    ]
+    if payload:
+        lineas.append(
+            f"<b>Propuesta:</b> <code>{_esc(json.dumps(payload, ensure_ascii=False))}</code>"
+        )
+    lineas.append("<b>Opciones:</b> ✅ Aceptar  ·  📥 Dejar en cola para reanálisis conjunto")
+    botones = [[
+        {"text": "✅ Aceptar", "callback_data": f"aprobar:{rid}"},
+        {"text": "📥 Dejar en cola", "callback_data": f"dejar_cola:{rid}"},
+    ]]
+    texto = "\n".join(lineas)
+    if dry_run:
+        print("[notificación seca]\n" + texto)
+        return False
+    return enviar(texto, botones)
 
 
 def probar() -> None:

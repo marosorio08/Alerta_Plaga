@@ -394,53 +394,131 @@ class ResolverCola:
     # ------------------------------------------------------------------ loop
 
     def revisar(self) -> int:
-        """Procesa la cola completa en modo ANÁLISIS (sin enviar).
+        """Procesa la cola con el modelo autónomo de 4 reintentos.
 
-        Según decisión de Rafa (21-oct ~13:00): el resolver **NO registra nada
-        en POST /casos** — solo re-analiza cada dudoso con el flujo validado,
-        deja una marca de auditoría en la bitácora y **deja el caso en la cola**
-        para revisión humana. Nada se envía automáticamente a la API.
-
-        Desde el 21-oct 14:50 SÍ avisa por Telegram (si está activo) el resumen
-        de lo que quedó en la cola, para que Rafa y Emmanuel sepan que hay
-        casos esperando el visto bueno y no duerman en la cola como pasó.
+        - SEGURO -> registra SOLO si PERMITIR_ENVIOS=1. Si está apagado,
+          lo deja como "listo_para_envio" y NO avisa.
+        - DUDA tras 4 reintentos -> avisa UNA vez con descripción, duda,
+          certeza y botones Aceptar / Dejar en cola.
+        - Los ya registrados salen de la cola.
         """
+        from decision_autonoma import Contexto, PERMITIR_ENVIOS, decidir, notificar
+
         cola = _leer_json(PENDIENTES, [])
         if not cola:
             return 0
-        analizados = 0
-        revisiones: list[str] = []
-        # No toca la cola: la conserva completa para que la gente decida.
+        ctx = Contexto()
+        nueva: list[dict] = []
         for pendiente in cola:
             rid = pendiente.get("reporte_id")
-            resumen = self.resolver_uno(pendiente)
-            resumen["registro"] = None  # nunca se registra
-            self._timbrar(rid, resumen)
-            decision = resumen.get("estado")
-            print(f"[resolver] {rid}: {decision} — {resumen.get('justificacion', '')[:120]}")
-            analizados += 1
-            motivo = resumen.get("motivo") or pendiente.get("motivo") or ""
-            # Se avisa de TODA la cola, no solo de revision_humana/pendiente.
-            # Antes, si todo quedaba como "resuelto"/"ya_resuelto", el resolver
-            # se quedaba callado para siempre y nadie se enteraba.
-            n = pendiente.get("n")
-            etiqueta = f"n={n} · " if n is not None else ""
-            revisiones.append(
-                f"  • {rid} — {decision} — {etiqueta}{str(motivo)[:60]}"
-            )
-        if revisiones and self._debe_avisar(cola):
-            cab = (f"🧠 <b>DUDOSOS EN COLA PARA VISTO BUENO</b> "
-                   f"({len(revisiones)})\n")
-            pie = ("\nNada se registra solo: revisa cada caso y usa los botones "
-                   "Registrar / Sin brote / Revisar.")
-            enviado = self._msg_telegram(cab + "\n".join(revisiones[:15]) + pie)
-            # Si el envío real falla, no se marca: el siguiente ciclo reintenta.
-            if enviado or not self.telegram:
-                self._marcar_avisado(cola)
-        return analizados
+            if not rid:
+                continue
+            estado = pendiente.get("estado")
+
+            # Ya decidido y esperando que se activen los envíos.
+            if estado == "listo_para_envio":
+                if not PERMITIR_ENVIOS:
+                    nueva.append(pendiente)
+                    continue
+                payload = pendiente.get("payload")
+                if payload:
+                    registro = self._registrar(rid, payload)
+                    if registro.get("ok"):
+                        self._timbrar(rid, {"reporte_id": rid, "ts": time.time(),
+                                            "estado": "enviado_auto", "payload": payload})
+                        print(f"[resolver] {rid}: envío automático OK")
+                        continue
+                    print(f"[resolver] {rid}: falló el envío automático: {registro.get('error')}")
+                nueva.append(pendiente)
+                continue
+
+            # Ya avisado: no se reanaliza hasta que el admin pida "Dejar en cola".
+            if estado == "duda_persistente" and pendiente.get("avisado") and not pendiente.get("dejar_cola"):
+                nueva.append(pendiente)
+                continue
+            if pendiente.get("dejar_cola"):
+                pendiente.pop("dejar_cola", None)
+                pendiente["avisado"] = False
+                pendiente["estado"] = "por_reanalizar"
+
+            app = ctx.app.get(rid, {})
+            # Si ya está registrado, no se reanaliza: sale de la cola.
+            try:
+                probe = self.api.validar_caso({
+                    "reporte_id": rid,
+                    "es_plaga": bool(app.get("es_plaga", True)),
+                    "plaga": app.get("plaga") or "desconocida",
+                })
+                if probe.get("ya_registrado_antes"):
+                    print(f"[resolver] {rid}: ya registrado -> sale de la cola")
+                    continue
+            except Exception:
+                pass
+
+            try:
+                decision = decidir(rid, ctx)
+            except Exception as exc:
+                print(f"[resolver] {rid}: error del modelo: {exc}")
+                nueva.append(pendiente)
+                continue
+
+            resumen = {
+                "reporte_id": rid, "ts": time.time(),
+                "estado": "seguro" if decision.seguro else "duda_persistente",
+                "certeza": round(decision.certeza, 3),
+                "intentos": decision.intentos,
+                "payload": decision.payload,
+                "duda": decision.duda,
+            }
+            if decision.seguro:
+                if PERMITIR_ENVIOS and decision.payload:
+                    registro = self._registrar(rid, decision.payload)
+                    resumen["registro"] = registro
+                    if registro.get("ok"):
+                        self._timbrar(rid, resumen)
+                        print(f"[resolver] {rid}: SEGURO y registrado ({decision.certeza:.0%})")
+                        continue
+                    resumen["estado"] = "error_registro"
+                    print(f"[resolver] {rid}: seguro pero falló el registro: {registro.get('error')}")
+                    nueva.append(pendiente)
+                else:
+                    pendiente.update({
+                        "estado": "listo_para_envio",
+                        "certeza": resumen["certeza"],
+                        "payload": decision.payload,
+                        "intentos": decision.intentos,
+                    })
+                    nueva.append(pendiente)
+                    print(f"[resolver] {rid}: SEGURO ({decision.certeza:.0%}); envíos apagados")
+            else:
+                if not pendiente.get("avisado"):
+                    notificar(decision, telegram=self.telegram)
+                    pendiente.update({
+                        "estado": "duda_persistente",
+                        "certeza": resumen["certeza"],
+                        "duda": decision.duda,
+                        "payload": decision.payload,
+                        "intentos": decision.intentos,
+                        "avisado": True,
+                        "avisado_ts": time.time(),
+                    })
+                    self._timbrar(rid, resumen)
+                    print(f"[resolver] {rid}: DUDA tras {decision.intentos} intentos -> notificado")
+                else:
+                    pendiente.update({
+                        "estado": "duda_persistente",
+                        "certeza": resumen["certeza"],
+                        "duda": decision.duda,
+                        "payload": decision.payload,
+                        "intentos": decision.intentos,
+                    })
+                nueva.append(pendiente)
+        _guardar_json(PENDIENTES, nueva)
+        return len(cola)
 
     def correr(self) -> None:
-        print(f"[resolver] modo ANÁLISIS | cada {self.intervalo}s | sin envíos")
+        from decision_autonoma import PERMITIR_ENVIOS as _ENV
+        print(f"[resolver] modelo autónomo | cada {self.intervalo}s | envíos={'ON' if _ENV else 'OFF'}")
         while True:
             try:
                 n = self.revisar()
@@ -453,7 +531,7 @@ class ResolverCola:
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="Analiza la cola de dudosos 7_7 (sin enviar)")
+    parser = argparse.ArgumentParser(description="Modelo autónomo de dudosos 7_7 (envíos según PERMITIR_ENVIOS)")
     parser.add_argument("--una-vez", action="store_true", help="Una pasada y sale")
     parser.add_argument("--intervalo", type=int, default=90)
     parser.add_argument("--sin-telegram", action="store_true",

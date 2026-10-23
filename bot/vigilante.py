@@ -186,7 +186,7 @@ class Vigilante:
                 "dudosos": dudosos_vistos}
 
     def _armar_mensaje(self, cat: dict) -> str | None:
-        if not any(cat.values()):
+        if not (cat.get("por_registrar") or cat.get("suman_mas")):
             return None
         lineas = [f"🔎 VIGILANTE 7_7 — {ahora()}"]
         if cat["por_registrar"]:
@@ -198,11 +198,7 @@ class Vigilante:
             lineas.append("\n💰 PUEDEN SUMAR +3 (completar campos):")
             for c in cat["suman_mas"][:12]:
                 lineas.append(f"  • {c['rid']} {str(c.get('plaga'))[:16]} -> agregar {','.join(c['agregables'])}")
-        if cat["dudosos"]:
-            lineas.append("\n⚠️ DUDOSOS EN ESPERA (revisar juntos):")
-            for c in cat["dudosos"][:12]:
-                lineas.append(f"  • {c['rid']} — {c.get('motivo','')[:70]}")
-        lineas.append("\n👉 Los decido contigo; el vigilante no registra nada solo.")
+        lineas.append("\nEl vigilante solo informa; el modelo autónomo decide y avisa solo si hay duda persistente.")
         return "\n".join(lineas)
 
     # --------------------------------------------------------------- bucle

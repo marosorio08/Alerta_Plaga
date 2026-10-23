@@ -889,6 +889,21 @@ class BotTelegram:
         return next((p for p in self._leer_pendientes()
                      if p.get("reporte_id") == reporte_id), None)
 
+    def dejar_cola(self, reporte_id: str) -> str:
+        """📥 Dejar en cola: mantiene el caso para reanálisis conjunto."""
+        pendientes = self._leer_pendientes()
+        for p in pendientes:
+            if p.get("reporte_id") == reporte_id:
+                p.update({
+                    "estado": "reanalizar_conjunto",
+                    "dejar_cola": True,
+                    "avisado": False,
+                    "intentos": 0,
+                })
+                self._guardar_pendientes(pendientes)
+                return f"📥 {reporte_id} dejado en cola para reanálisis conjunto."
+        return f"No encontré {reporte_id} en la cola."
+
     def _registrar_pendiente(self, pendiente: dict, brote: bool | None = None) -> str:
         """Registra el payload de la cola SOLO si la API confirma que sigue libre.
 
@@ -1033,6 +1048,8 @@ class BotTelegram:
                 texto = self.cambiar_tecnico(rid)
             elif accion == "falsa":
                 texto = self.falsa_alarma(rid)
+            elif accion == "dejar_cola":
+                texto = self.dejar_cola(rid)
             else:
                 texto = "Acción no reconocida."
             chat = (cb.get("message") or {}).get("chat") or {}

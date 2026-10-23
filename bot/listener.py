@@ -572,15 +572,16 @@ class Listener:
         return None
 
     def _parkear_dudoso(self, reporte: dict, detalle: dict, caso: dict, motivo: str) -> None:
-        """Guarda el caso en pendientes y avisa al coordinador por Telegram."""
+        """Guarda el caso en la cola. La notificación se difiere al resolver
+        autónomo: solo avisa si tras 4 reintentos no hay certeza."""
         pendientes = []
         if PENDIENTES_REVISION.exists():
             try:
                 pendientes = json.loads(PENDIENTES_REVISION.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 pendientes = []
-        pendientes = [p for p in pendientes if p.get("reporte_id") != caso["reporte_id"]]
         rid = str(caso["reporte_id"])
+        pendientes = [p for p in pendientes if p.get("reporte_id") != rid]
         pendientes.append({
             "reporte_id": rid,
             "recibido": reporte.get("recibido"),
@@ -594,26 +595,13 @@ class Listener:
                            else "marcar sin brote" if caso.get("_brote_dudoso")
                            else "revisar"),
             "procesado": ahora(),
+            "estado": "por_reanalizar",
+            "intentos": 0,
+            "avisado": False,
         })
         guardar_json(PENDIENTES_REVISION, pendientes)
         self._parkeados.add(rid)
-        print(f"[{ahora()}] CASO DUDOSO {rid}: {motivo} -> pendiente de revisión")
-        # La notificación no depende del hilo del bot: el notificador ya sabe
-        # trabajar en seco si faltan TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.
-        if rid in self.estado["dudosos_avisados"]:
-            return
-        try:
-            from telegram_notificador import alerta_dudoso
-
-            enviado = alerta_dudoso(caso, motivo, detalle,
-                                    refs=caso.get("_brote_refs"))
-            if enviado:
-                self.estado["dudosos_avisados"].append(rid)
-                print(f"[{ahora()}] alerta Telegram enviada: {rid}")
-            else:
-                print(f"[{ahora()}] alerta Telegram no enviada (seco o error): {rid}")
-        except Exception as exc:
-            print(f"[{ahora()}] aviso Telegram de dudoso falló: {exc}")
+        print(f"[{ahora()}] CASO DUDOSO {rid}: {motivo} -> cola (el resolver decide)")
 
     def _arrancar_vigilante(self) -> None:
         """Avisa al coordinador por Telegram cuando hay reportes por verificar."""
