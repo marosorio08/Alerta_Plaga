@@ -357,6 +357,9 @@ class ResolverCola:
             d = exc.detalle
             if isinstance(d, dict) and "error" in d:
                 d = d["error"]
+            if exc.status == 409:
+                # Ya registrado (manual o por el listener): no es un fallo.
+                return {"ok": True, "resp": d, "ya_registrado": True}
             return {"ok": False, "error": json.dumps(d, ensure_ascii=False)[:400]}
         except Exception as exc:
             return {"ok": False, "error": str(exc)[:200]}
@@ -426,6 +429,16 @@ class ResolverCola:
                     if registro.get("ok"):
                         self._timbrar(rid, {"reporte_id": rid, "ts": time.time(),
                                             "estado": "enviado_auto", "payload": payload})
+                        if registro.get("ya_registrado"):
+                            print(f"[resolver] {rid}: ya registrado -> sale de la cola")
+                            continue
+                        if self.telegram:
+                            try:
+                                from telegram_notificador import notificar_envio
+                                notificar_envio(rid, payload, registro.get("resp"),
+                                                origen="modelo autónomo (cola)")
+                            except Exception as exc:
+                                print(f"[resolver] aviso Telegram de envío falló: {exc}")
                         print(f"[resolver] {rid}: envío automático OK")
                         continue
                     print(f"[resolver] {rid}: falló el envío automático: {registro.get('error')}")
@@ -476,6 +489,9 @@ class ResolverCola:
                     resumen["registro"] = registro
                     if registro.get("ok"):
                         self._timbrar(rid, resumen)
+                        if registro.get("ya_registrado"):
+                            print(f"[resolver] {rid}: ya registrado -> sale de la cola")
+                            continue
                         if self.telegram:
                             try:
                                 from telegram_notificador import notificar_envio
