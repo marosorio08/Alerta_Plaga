@@ -52,9 +52,11 @@ es obligatoria por el reglamento y permite reproducibilidad.
 
 El estado cambia rápido. La fuente de verdad es la API, no este README.
 
-### `main` actual
+### Código de `main` analizado
 
 - Head de código analizado: `252b840`.
+- El head actual de `main` puede incluir commits de documentación posteriores;
+  este README describe el código de `252b840`.
 - Incluye el modelo de decisión autónoma de 4 intentos.
 - Incluye dedupe de brote por **productor + parcela**.
 - Incluye el aviso por Telegram de aciertos por reporte enviado.
@@ -64,12 +66,15 @@ El estado cambia rápido. La fuente de verdad es la API, no este README.
 
 ### Ramas de trabajo
 
-| Rama | Head | Vs `main` | Qué aporta |
+| Rama | Head | Vs `main` de código (252b840) | Qué aporta |
 |---|---|---|---|
 | `Caso_Emmanuel` | `04a2d40` | 11 atrás / 2 adelante | Ledger de confirmados, replay y documentación |
 | `fix/brotes-revision-rafa` | `1768656` | 26 atrás / 1 adelante | Brote conservador, `evaluar_caso`, alertas |
 | `Rafa` | `5cf0e93` | 61 atrás / 0 adelante | `REPORTE_FINAL`; PRs #1–#4 mergeados |
 | `fix/supabase-persistencia` | `252a498` | 74 atrás / 0 adelante | Supabase; PR #5 mergeado |
+
+> Los conteos de ramas se comparan contra el código de `main` en `252b840`;
+> el commit de este README no se cuenta.
 
 PRs:
 
@@ -610,12 +615,17 @@ Casos reales usados como regresión de brote:
 
 - `.env` no se versiona.
 - El token del equipo nunca llega al navegador.
-- El token de respaldo de `server.js` es solo para pruebas locales.
+- No hay token de respaldo hardcodeado en `server.js`: si falta `EQUIPO_TOKEN`,
+  el dashboard sirve el respaldo de `cache/` y avisa por consola.
 - No se guardan tokens en `cache/`, README ni documentos.
 - `POST /casos` no se usa como probe: registra.
 - No registrar casos dudosos sin visto bueno.
 - No activar envíos sin revisar la cola y el `.env` del agente.
 - No commitear `cache/` ni scripts locales.
+- El dashboard es público por diseño: no expone el token, pero sí datos
+  operativos. Si no debe ser público, restringirlo por auth/IP/rate limit.
+- Los documentos históricos incluyen host/usuario SSH y datos de productores;
+  mantener el repositorio privado y no publicarlos.
 
 ---
 
@@ -626,7 +636,7 @@ Casos reales usados como regresión de brote:
 | Rafael Martínez (`exogenesis1083-ops`) | Arquitectura, motor de reglas, IA, listener, brote, bot, despliegue, tests y documentación |
 | Emmanuel Osorio (`marosorio08`) | Dashboard, Supabase, reconciliación del listener, pausa de envíos y rama de brotes |
 
-Aproximadamente, en `main`:
+Aproximadamente, contribución de código hasta `252b840`:
 
 - Rafael: 78 commits no-merge, +17,171 / −1,214 líneas.
 - Emmanuel: 8 commits no-merge, +2,135 / −253 líneas.
@@ -647,6 +657,12 @@ Documentos principales en `main`:
 - [`CHECKPOINT_SESION.md`](CHECKPOINT_SESION.md) — estado histórico del 21-oct.
 - [`REPORTE_FINAL.md`](REPORTE_FINAL.md) — reporte del 21-oct.
 - [`HISTORIA_DEL_PROYECTO.md`](HISTORIA_DEL_PROYECTO.md) — historia larga.
+
+> Nota de consistencia: `docs/ARQUITECTURA.md` y `docs/NIVEL2.md` conservan
+> el diseño original. El código actual añade `decision_autonoma`, dedupe
+> productor + parcela y `n=2`; este README refleja el estado más reciente.
+> `app_web/README.md` es específico del dashboard y también puede estar
+> desactualizado.
 
 Documentación adicional en ramas:
 
