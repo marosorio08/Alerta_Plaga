@@ -389,6 +389,12 @@ class Listener:
                 print(f"[{ahora()}] aviso Supabase (envío {rid}): {exc}")
             # Persistir de inmediato: si el proceso muere, no se pierde el aviso
             # de que este reporte ya fue enviado.
+            if self.telegram:
+                try:
+                    from telegram_notificador import notificar_envio
+                    notificar_envio(rid, caso, respuesta, origen="agente automático")
+                except Exception as exc:
+                    print(f"[{ahora()}] aviso Telegram de envío falló: {exc}")
             guardar_json(ESTADO, self.estado)
             return True
         except ApiError as exc:

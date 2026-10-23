@@ -210,6 +210,45 @@ def alerta_dudoso(caso: dict, motivo: str, detalle: dict | None = None,
     return enviar("\n".join(lineas), botones)
 
 
+def notificar_envio(reporte_id: str, caso: dict, respuesta: dict | None,
+                    origen: str = "automático") -> bool:
+    """Avisa a Rafa y Emmanuel de CADA reporte enviado y sus aciertos.
+
+    Llega a todos los chats configurados (TELEGRAM_CHAT_ID + TELEGRAM_CHATS_EXTRA).
+    """
+    resp = respuesta or {}
+    det = resp.get("detalle") or {}
+    puntos = resp.get("puntos")
+    maximo = resp.get("maximo")
+    if resp.get("complemento"):
+        puntos = resp.get("puntos_total", puntos)
+        titulo = f"✅ <b>COMPLEMENTO ENVIADO — {_esc(reporte_id)}</b>"
+    else:
+        titulo = f"✅ <b>REPORTE ENVIADO — {_esc(reporte_id)}</b>"
+    aciertos = [k for k, v in det.items()
+                if v is True and k != "prioridad_sin_puntos"]
+    fallos = [k for k, v in det.items() if v is False]
+    plaga = caso.get("plaga") or "—"
+    pct = caso.get("_pct") if caso.get("_pct") is not None else caso.get("pct")
+    sem = caso.get("semaforo") or "—"
+    tec = caso.get("tecnico_id") or "—"
+    brote = caso.get("brote")
+    lineas = [
+        titulo,
+        f"<b>Origen:</b> {_esc(origen)}",
+        f"<b>Puntos:</b> {_esc(puntos)}/{_esc(maximo)}",
+        f"<b>Aciertos:</b> {_esc(', '.join(aciertos)) if aciertos else '—'}",
+    ]
+    if fallos:
+        lineas.append(f"⚠️ <b>Fallos:</b> {_esc(', '.join(fallos))}")
+    lineas.append(
+        f"<b>Plaga:</b> {_esc(plaga)} · <b>pct:</b> {_esc(pct) if pct is not None else '—'} · "
+        f"<b>Semáforo:</b> {_esc(sem)} · <b>Técnico:</b> {_esc(tec)} · "
+        f"<b>Brote:</b> {_esc(brote) if brote is not None else '—'}"
+    )
+    return enviar("\n".join(lineas))
+
+
 def alerta_duda_final(decision, dry_run: bool = False) -> bool:
     """Notifica SOLO cuando el modelo autónomo no logró certeza tras 4 intentos.
 

@@ -476,6 +476,14 @@ class ResolverCola:
                     resumen["registro"] = registro
                     if registro.get("ok"):
                         self._timbrar(rid, resumen)
+                        if self.telegram:
+                            try:
+                                from telegram_notificador import notificar_envio
+                                notificar_envio(rid, decision.payload or {},
+                                                registro.get("resp"),
+                                                origen="modelo autónomo")
+                            except Exception as exc:
+                                print(f"[resolver] aviso Telegram de envío falló: {exc}")
                         print(f"[resolver] {rid}: SEGURO y registrado ({decision.certeza:.0%})")
                         continue
                     resumen["estado"] = "error_registro"
