@@ -610,7 +610,9 @@ class Listener:
 
             from vigilante import Vigilante
 
-            v = Vigilante(api=self.api, telegram=True)
+            # Sin avisos al admin: el modelo autónomo decide y solo el
+            # resolver avisa cuando tras 4 intentos no hay certeza.
+            v = Vigilante(api=self.api, telegram=False)
             hilo = threading.Thread(target=v.correr, daemon=True, name="vigilante")
             hilo.start()
             print(f"[{ahora()}] vigilante de puntos activo (hilo {hilo.name})")
